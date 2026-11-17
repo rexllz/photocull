@@ -151,7 +151,7 @@
 <section id="welcome" class="view center">
   <svg class="logo"><use href="#logo"/></svg>
   <h1>photocull</h1>
-  <p class="lead">Find duplicate and look-alike shots from your camera, compare them, and clear them out in one go.</p>
+  <p class="lead">Find duplicate and look-alike photos from your camera, compare them, and clear them out in one go.</p>
   <button id="pick" class="big">Choose a folder…</button>
   <div class="or">or paste a folder path</div>
   <form class="pathrow" id="pathform">
@@ -323,6 +323,8 @@ async function loadGroups(keepMarks) {
   const name = state.root.slice(state.root.lastIndexOf("/") + 1) || state.root;
   $("folder").textContent = name; $("folder").title = state.root + " — choose another folder";
   document.title = "photocull — " + name;
+  document.querySelector('[data-filter="video"]').hidden = !state.videos;
+  if (!state.videos && filter === "video") filter = "all";
   $("threshold").value = state.threshold;
   const win = $("window");
   if (![...win.options].some(o => +o.value === state.window)) win.add(new Option(state.window + " seconds", state.window));

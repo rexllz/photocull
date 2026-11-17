@@ -111,7 +111,7 @@ class App:
                 "done": self.done, "total": self.total, "phase": self.phase, "files": len(self.rows),
                 "unreadable": sum(1 for r in self.rows if not r["dhash"]),
                 "threshold": self.threshold, "window": self.window,
-                "recent": recent_folders()}
+                "videos": index.INCLUDE_VIDEOS, "recent": recent_folders()}
 
     def _shot_json(self, s):
         return {"id": s["id"], "name": s["name"],
@@ -133,7 +133,9 @@ class App:
     # ---- actions --------------------------------------------------------
     def trash(self, ids):
         with self.lock:
-            shots = [self.shots[i] for i in ids if i in self.shots]
+            # Second line of defence: a video is never moved to the Trash from here.
+            shots = [self.shots[i] for i in ids if i in self.shots and not self.shots[i]["video"]
+                     and not any(f["kind"] == "video" for f in self.shots[i]["files"])]
             paths = [f["path"] for s in shots for f in s["files"]]
             failed = set(move_to_trash(paths))
             moved = {p for p in paths if p not in failed}

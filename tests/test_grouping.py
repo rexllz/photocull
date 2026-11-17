@@ -104,5 +104,31 @@ class GroupingTest(unittest.TestCase):
         self.assertEqual(group_shots(shots), [])
 
 
+class VideoSafetyTest(unittest.TestCase):
+    def test_videos_are_not_scanned(self):
+        import os
+        import tempfile
+        from photocull import index
+        with tempfile.TemporaryDirectory() as d:
+            for name in ("a.JPG", "b.MOV", "c.mp4"):
+                open(os.path.join(d, name), "w").close()
+            found = sorted(os.path.basename(p) for p, _ in index.find_media(d))
+        self.assertFalse(index.INCLUDE_VIDEOS)
+        self.assertEqual(found, ["a.JPG"])
+
+    def test_trash_refuses_videos(self):
+        from unittest import mock
+        from photocull import server
+        app = server.App()
+        video = {"id": "v", "video": True, "files": [{"path": "/x/clip.MOV", "kind": "video"}]}
+        app.shots = {"v": video}
+        with mock.patch.object(server, "move_to_trash") as mover, \
+                mock.patch.object(server.index, "forget"), mock.patch.object(app, "_group"):
+            mover.return_value = []
+            result = app.trash(["v"])
+        mover.assert_called_once_with([])
+        self.assertEqual(result["files"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

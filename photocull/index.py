@@ -21,6 +21,7 @@ RAW_EXTS = {".nef", ".nrw"}
 JPEG_EXTS = {".jpg", ".jpeg"}
 IMAGE_EXTS = RAW_EXTS | JPEG_EXTS | {".heic", ".heif", ".png", ".tif", ".tiff"}
 VIDEO_EXTS = {".mov", ".mp4", ".m4v", ".avi"}
+INCLUDE_VIDEOS = False  # photos only for now: videos are not scanned, shown or trashed
 
 THUMB_PX = 480
 QHASH_CHUNK = 1 << 20  # 1 MB
@@ -79,7 +80,7 @@ def find_media(root):
             ext = os.path.splitext(name)[1].lower()
             if ext in IMAGE_EXTS:
                 yield os.path.join(dirpath, name), "image"
-            elif ext in VIDEO_EXTS:
+            elif INCLUDE_VIDEOS and ext in VIDEO_EXTS:
                 yield os.path.join(dirpath, name), "video"
 
 

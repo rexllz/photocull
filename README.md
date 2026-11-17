@@ -55,7 +55,7 @@ and ranks by the fallback rules.
 
 ## Reviewing
 
-Tabs: **All**, **Identical**, **Similar** and **Videos** show groups; **Unique**
+Tabs: **All**, **Identical** and **Similar** show groups; **Unique**
 shows every shot that has no look-alike, so you can check what was left out and
 trash any of those too.
 
@@ -98,7 +98,8 @@ latest, so a slowly changing sequence can't chain unrelated pictures together.
 
 - Files larger than 4 MB are compared by size plus three 1 MB samples (start,
   middle, end) rather than every byte, to keep scanning large videos fast.
-- Videos are matched as identical copies, or as similar by their preview frame.
+- Photos only for now: videos are not scanned or shown, and the Trash action
+  refuses them. (`INCLUDE_VIDEOS` in `photocull/index.py` turns them back on.)
 - The cache lives in `~/Library/Caches/photocull/`; the photo folder is never
   written to.
 - The review page is only reachable from this Mac (`127.0.0.1`).
