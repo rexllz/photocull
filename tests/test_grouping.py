@@ -159,7 +159,8 @@ class AccessTest(unittest.TestCase):
 
     def test_key_link_signs_in_with_a_cookie(self):
         resp = self.request("GET", "/?k=" + self.app.token)
-        self.assertEqual(resp.status, 303)
+        self.assertEqual(resp.status, 200)   # the page itself, no redirect to lose the cookie on
+        self.assertIn("SameSite=Lax", resp.getheader("Set-Cookie"))
         cookie = resp.getheader("Set-Cookie").split(";")[0]
         self.assertIn("HttpOnly", resp.getheader("Set-Cookie"))
         self.assertEqual(self.request("GET", "/", {"Cookie": cookie}).status, 200)

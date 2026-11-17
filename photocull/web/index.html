@@ -285,6 +285,7 @@
 
 <script>
 const TOKEN = "__TOKEN__";
+if (location.search) history.replaceState(null, "", location.pathname + location.hash);  // drop the sign-in key from the address bar
 const PAGE = 40;
 let state = {}, groups = [], singles = [], marks = new Map(), filter = "all", shown = [], rendered = 0, focus = 0;
 let box = null;       // {group, i} while viewing full size

@@ -21,7 +21,7 @@ PREVIEW_PX = 2400
 DENIED = b"""<!doctype html><meta charset="utf-8"><title>photocull</title>
 <body style="font:16px -apple-system,sans-serif;background:#0e1012;color:#eceef1;padding:60px;text-align:center">
 <h2>This link is missing its key or has expired</h2>
-<p style="color:#99a1ab">Open the link printed in the terminal where photocull is running.</p>"""
+<p style="color:#99a1ab">__HINT__</p>"""
 
 _PICK = """
 var app = Application.currentApplication();
@@ -336,19 +336,26 @@ def make_handler(app):
             path = parsed.path
             key = parse_qs(parsed.query).get("k", [""])[0]
             expected = self._expected_key()
-            if path == "/" and key and expected and secrets.compare_digest(key, expected):
-                # Swap the key in the link for a cookie, so it leaves the address bar.
-                self.send_response(303)
-                self.send_header("Location", "/")
-                self.send_header("Set-Cookie", "%s=%s; HttpOnly; SameSite=Strict; Path=/"
-                                 % (self._cookie_name(), expected))
-                self.send_header("Content-Length", "0")
-                return self.end_headers()
-            if not self._authed():
-                return self._send(DENIED, "text/html; charset=utf-8", 403)
+            signing_in = bool(path == "/" and key and expected and secrets.compare_digest(key, expected))
+            if not signing_in and not self._authed():
+                hint = (b"On the Mac, click Phone and scan the QR code again." if self._remote()
+                        else b"Open the link printed in the terminal where photocull is running.")
+                return self._send(DENIED.replace(b"__HINT__", hint), "text/html; charset=utf-8", 403)
             if path == "/":
-                html = (WEB / "index.html").read_text().replace("__TOKEN__", expected)
-                return self._send(html.encode(), "text/html; charset=utf-8")
+                # A link with the right key gets the page straight away plus a cookie for
+                # everything after it (the page then drops the key from the address bar).
+                # No redirect: a phone opening the link from a QR scanner app would not
+                # send a just-set cookie on the redirected request.
+                body = (WEB / "index.html").read_text().replace("__TOKEN__", expected).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                if signing_in:
+                    self.send_header("Set-Cookie", "%s=%s; HttpOnly; SameSite=Lax; Path=/"
+                                     % (self._cookie_name(), expected))
+                self.end_headers()
+                return self.wfile.write(body)
             if path == "/api/state":
                 state = app.state()
                 state["remote"] = self._remote()
