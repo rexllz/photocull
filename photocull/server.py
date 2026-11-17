@@ -93,8 +93,8 @@ class App:
 
     def regroup(self, threshold, window):
         with self.lock:
-            self.threshold = max(0, min(32, int(threshold)))
-            self.window = max(1, min(86400, int(window)))
+            self.threshold = max(2, min(16, int(threshold)))
+            self.window = max(1, min(600, int(window)))
             if self.status == "ready":
                 self._group()
 

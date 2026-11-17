@@ -33,10 +33,14 @@ CREATE TABLE IF NOT EXISTS files (
     dhash TEXT,
     qhash TEXT,
     thumb TEXT,
-    kind  TEXT NOT NULL
+    kind  TEXT NOT NULL,
+    color TEXT
 )
 """
-COLUMNS = ("path", "size", "mtime", "taken", "w", "h", "dhash", "qhash", "thumb", "kind")
+COLUMNS = ("path", "size", "mtime", "taken", "w", "h", "dhash", "qhash", "thumb", "kind", "color")
+HASH_SIDE = 16                 # 16x16 comparisons -> 256-bit shape fingerprint
+HASH_HEX = HASH_SIDE * HASH_SIDE // 4
+COLOR_GRID = 4                 # 4x4 grid of average colours
 
 
 def cache_dir(root):
@@ -51,6 +55,8 @@ def cache_dir(root):
 def open_db(cache):
     db = sqlite3.connect(str(cache / "index.db"), check_same_thread=False)
     db.execute(SCHEMA)
+    if "color" not in [c[1] for c in db.execute("PRAGMA table_info(files)")]:
+        db.execute("ALTER TABLE files ADD COLUMN color TEXT")  # cache from an older version
     return db
 
 
@@ -108,8 +114,8 @@ def _image_meta(src):
     return taken, w, h
 
 
-def bmp_gray(data):
-    """Rows of grayscale values from an uncompressed 24/32-bit BMP."""
+def bmp_pixels(data):
+    """Rows of (r, g, b) from an uncompressed 24/32-bit BMP."""
     (offset,) = struct.unpack_from("<I", data, 10)
     w, h = struct.unpack_from("<ii", data, 18)
     (bpp,) = struct.unpack_from("<H", data, 28)
@@ -118,15 +124,15 @@ def bmp_gray(data):
     rows = []
     for y in range(abs(h)):
         base = offset + y * stride
-        rows.append([data[base + x * step + 2] * 299 + data[base + x * step + 1] * 587
-                     + data[base + x * step] * 114 for x in range(w)])
+        rows.append([(data[base + x * step + 2], data[base + x * step + 1], data[base + x * step])
+                     for x in range(w)])
     if h > 0:  # positive height means the rows are stored bottom-up
         rows.reverse()
     return rows
 
 
 def dhash_rows(rows):
-    """Difference hash: one bit per horizontally adjacent pixel pair (9x8 -> 64 bits)."""
+    """Difference hash: one bit per horizontally adjacent pair of brightness values."""
     bits = 0
     for row in rows:
         for x in range(len(row) - 1):
@@ -134,18 +140,43 @@ def dhash_rows(rows):
     return bits
 
 
-def dhash_file(image):
+def color_grid(pixels):
+    """Average colour of each cell in a COLOR_GRID x COLOR_GRID grid, as a flat list."""
+    cell = HASH_SIDE // COLOR_GRID
+    out = []
+    for gy in range(COLOR_GRID):
+        for gx in range(COLOR_GRID):
+            block = [pixels[y][x] for y in range(gy * cell, (gy + 1) * cell)
+                     for x in range(gx * cell, (gx + 1) * cell)]
+            out.extend(sum(p[c] for p in block) // len(block) for c in range(3))
+    return out
+
+
+def fingerprint(image):
+    """(shape hash, colour grid) as hex strings, or (None, None) if unreadable.
+
+    The shape hash says where the picture gets brighter or darker; the colour grid
+    says what colours sit where. Two shots must agree on both to count as similar.
+    """
     fd, tmp = tempfile.mkstemp(suffix=".bmp", prefix="photocull-")
     os.close(fd)
     try:
-        _run(["sips", "-z", "8", "9", "-s", "format", "bmp", image, "--out", tmp], timeout=60)
+        _run(["sips", "-z", str(HASH_SIDE), str(HASH_SIDE + 1), "-s", "format", "bmp",
+              image, "--out", tmp], timeout=60)
         with open(tmp, "rb") as f:
             data = f.read()
         if len(data) < 54:
-            return None
-        return "%016x" % dhash_rows(bmp_gray(data))
+            return None, None
+        pixels = bmp_pixels(data)
+        if len(pixels) == HASH_SIDE + 1:  # rotated images come back as 16 wide x 17 high
+            pixels = [list(col) for col in zip(*pixels)]
+        if len(pixels) != HASH_SIDE or len(pixels[0]) != HASH_SIDE + 1:
+            return None, None
+        gray = [[r * 299 + g * 587 + b * 114 for r, g, b in row] for row in pixels]
+        return ("%0*x" % (HASH_HEX, dhash_rows(gray)),
+                "".join("%02x" % v for v in color_grid(pixels)))
     except (OSError, struct.error, IndexError):
-        return None
+        return None, None
     finally:
         try:
             os.unlink(tmp)
@@ -176,12 +207,21 @@ def _process(path, kind, st, thumbs):
             taken, w, h = _image_meta(path)
         else:
             ok = _video_thumb(path, thumb)
-        dhash = dhash_file(thumb) if ok else None
+        dhash, color = fingerprint(thumb) if ok else (None, None)
     except (subprocess.TimeoutExpired, OSError):
-        ok, dhash = False, None
+        ok, dhash, color = False, None, None
     return {"path": path, "size": st.st_size, "mtime": st.st_mtime,
             "taken": taken or st.st_mtime, "w": w, "h": h, "dhash": dhash,
-            "qhash": None, "thumb": thumb if ok else None, "kind": kind}
+            "qhash": None, "thumb": thumb if ok else None, "kind": kind, "color": color}
+
+
+def _refingerprint(row):
+    """Upgrade a cached row made by an older version, reusing its thumbnail."""
+    try:
+        row["dhash"], row["color"] = fingerprint(row["thumb"])
+    except (subprocess.TimeoutExpired, OSError):
+        row["dhash"], row["color"] = None, None
+    return row
 
 
 def _save(db, row):
@@ -210,7 +250,7 @@ def scan(root, db, cache, progress=None, rescan=False):
             row = dict(zip(COLUMNS, values))
             cached[row["path"]] = row
 
-    rows, todo, seen = [], [], set()
+    rows, todo, stale, seen = [], [], [], set()
     for path, kind in find_media(root):
         try:
             st = os.stat(path)
@@ -219,24 +259,31 @@ def scan(root, db, cache, progress=None, rescan=False):
         seen.add(path)
         old = cached.get(path)
         fresh = old and old["size"] == st.st_size and abs(old["mtime"] - st.st_mtime) < 1
-        if fresh and (old["thumb"] is None or os.path.exists(old["thumb"])):
+        if fresh and old["thumb"] is None:
             rows.append(old)
+        elif fresh and os.path.exists(old["thumb"]):
+            current = old["dhash"] and len(old["dhash"]) == HASH_HEX and old["color"]
+            (rows if current else stale).append(old)
         else:
             todo.append((path, kind, st))
 
     forget(db, [p for p in cached if p not in seen])
 
     thumbs = cache / "thumbs"
-    done = 0
+    done, total = 0, len(todo) + len(stale)
+
+    def work(job):
+        return _refingerprint(job) if isinstance(job, dict) else _process(job[0], job[1], job[2], thumbs)
+
     with ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as pool:
-        for row in pool.map(lambda a: _process(a[0], a[1], a[2], thumbs), todo):
+        for row in pool.map(work, stale + todo):
             _save(db, row)
             rows.append(row)
             done += 1
             if done % 25 == 0:
                 db.commit()
             if progress:
-                progress(done, len(todo))
+                progress(done, total)
     db.commit()
     return rows
 

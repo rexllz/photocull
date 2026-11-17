@@ -6,12 +6,26 @@ import re
 from .index import JPEG_EXTS, RAW_EXTS
 
 COPY_NAME = re.compile(r"( copy( \d+)?|\(\d+\)|-\d+)$", re.IGNORECASE)
-BANDS = 4          # 64-bit hash split into 4 x 16 bits
+BANDS = 16         # 256-bit shape hash split into 16 x 16 bits
 MAX_BUCKET = 400   # skip huge buckets (e.g. hundreds of black frames)
+NEAR_BITS = 12     # any-time match: at most this many of 256 shape bits differ...
+NEAR_COLOR = 8     # ...and colours differ by at most this much on average (0-255)
 
 
 def hamming(a, b):
     return bin(a ^ b).count("1")
+
+
+def color_distance(a, b):
+    """Average per-channel difference between two colour grids (0-255)."""
+    return sum(abs(x - y) for x, y in zip(a, b)) / float(len(a))
+
+
+def alike(a, b, max_bits, max_color):
+    """Two shots look alike only if both their shapes and their colours agree."""
+    return (a["video"] == b["video"]
+            and hamming(a["dhash"], b["dhash"]) <= max_bits
+            and color_distance(a["color"], b["color"]) <= max_color)
 
 
 def build_shots(rows):
@@ -47,7 +61,8 @@ def _shot(files):
         "pixels": max((f["w"] or 0) * (f["h"] or 0) for f in files),
         "size": sum(f["size"] for f in files),
         "taken": rep["taken"],
-        "dhash": int(rep["dhash"], 16) if rep["dhash"] else None,
+        "dhash": int(rep["dhash"], 16) if rep["dhash"] and rep.get("color") else None,
+        "color": list(bytes.fromhex(rep["color"])) if rep.get("color") else None,
         "sig": (rep["size"], rep["qhash"]) if rep["qhash"] else None,
         "copy_name": bool(COPY_NAME.search(stem)),
     }
@@ -73,12 +88,13 @@ class _Union:
         self.parent[self.find(a)] = self.find(b)
 
 
-def group_shots(shots, threshold=10, window=30, near=3):
+def group_shots(shots, threshold=10, window=30):
     """Group shots that are byte-identical, near-identical, or similar and taken together.
 
-    threshold: max differing hash bits (of 64) for shots taken within `window` seconds.
-    near:      max differing bits for shots taken at any time (re-saved / resized copies).
+    threshold: looseness, 2 (strict) to 16 (loose), for shots taken within `window`
+               seconds of each other. Near-identical copies match at any time.
     """
+    max_bits, max_color = 4 * threshold, 6 + threshold
     u = _Union(len(shots))
 
     # 1. Identical content.
@@ -92,32 +108,41 @@ def group_shots(shots, threshold=10, window=30, near=3):
 
     hashed = [i for i, s in enumerate(shots) if s["dhash"] is not None]
 
-    # 2. Near-identical at any time. If two 64-bit hashes differ in <= 3 bits, at
-    #    least one of their four 16-bit bands is equal, so only compare within bands.
-    if near < BANDS:
-        for band in range(BANDS):
-            buckets = {}
-            for i in hashed:
-                key = (shots[i]["video"], (shots[i]["dhash"] >> (16 * band)) & 0xFFFF)
-                buckets.setdefault(key, []).append(i)
-            for members in buckets.values():
-                if len(members) > MAX_BUCKET:
-                    continue
-                for x in range(len(members)):
-                    for y in range(x + 1, len(members)):
-                        a, b = members[x], members[y]
-                        if hamming(shots[a]["dhash"], shots[b]["dhash"]) <= near:
-                            u.join(a, b)
+    # 2. Near-identical at any time (resized or re-saved copies). Hashes differing in
+    #    fewer bits than there are bands share at least one band, so compare per band.
+    for band in range(BANDS):
+        buckets = {}
+        for i in hashed:
+            key = (shots[i]["video"], (shots[i]["dhash"] >> (16 * band)) & 0xFFFF)
+            buckets.setdefault(key, []).append(i)
+        for members in buckets.values():
+            if len(members) > MAX_BUCKET:
+                continue
+            for x in range(len(members)):
+                for y in range(x + 1, len(members)):
+                    if alike(shots[members[x]], shots[members[y]], NEAR_BITS, NEAR_COLOR):
+                        u.join(members[x], members[y])
 
-    # 3. Similar and taken close together (bursts, retakes of the same scene).
-    ordered = sorted(hashed, key=lambda i: shots[i]["taken"])
-    for x, a in enumerate(ordered):
-        for b in ordered[x + 1:]:
-            if shots[b]["taken"] - shots[a]["taken"] > window:
-                break
-            if shots[a]["video"] == shots[b]["video"] and \
-                    hamming(shots[a]["dhash"], shots[b]["dhash"]) <= threshold:
-                u.join(a, b)
+    # 3. Similar and taken close together (bursts, retakes of one scene). A shot joins
+    #    a run only if it resembles both the run's first shot and its latest one, so a
+    #    slowly changing sequence cannot chain unrelated pictures into one group.
+    runs = []
+    for i in sorted(hashed, key=lambda i: shots[i]["taken"]):
+        shot = shots[i]
+        runs = [r for r in runs if shot["taken"] - shots[r[-1]]["taken"] <= window]
+        best = None
+        for run in runs:
+            if alike(shot, shots[run[-1]], max_bits, max_color) and \
+                    alike(shot, shots[run[0]], max_bits, max_color):
+                d = hamming(shot["dhash"], shots[run[-1]]["dhash"])
+                if best is None or d < best[0]:
+                    best = (d, run)
+        if best:
+            best[1].append(i)
+        else:
+            runs.append([i])
+        for run in ([best[1]] if best else []):
+            u.join(run[0], i)
 
     components = {}
     for i in range(len(shots)):

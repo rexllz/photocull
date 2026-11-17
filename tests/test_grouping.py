@@ -4,12 +4,14 @@ from photocull.grouping import build_shots, group_shots
 from photocull.index import dhash_rows
 
 
-def row(path, dhash, taken=0.0, size=1000, qhash=None, w=6000, h=4000, kind="image"):
+def row(path, dhash, taken=0.0, size=1000, qhash=None, w=6000, h=4000, kind="image", color=100):
     return {"path": path, "size": size, "mtime": taken, "taken": taken, "w": w, "h": h,
-            "dhash": "%016x" % dhash, "qhash": qhash, "thumb": None, "kind": kind}
+            "dhash": "%064x" % dhash, "qhash": qhash, "thumb": None, "kind": kind,
+            "color": "%02x" % color * 48}
 
 
-A, B = 0x0F0F0F0F0F0F0F0F, 0xF0F0F0F0F0F0F0F0  # 64 bits apart
+A = int("0f" * 32, 16)
+B = int("f0" * 32, 16)  # every bit differs from A
 
 
 def names(groups):
@@ -34,7 +36,7 @@ class GroupingTest(unittest.TestCase):
                          [("/a", False), ("/b", True)])
 
     def test_similar_only_when_taken_together(self):
-        near = A ^ 0xFF  # 8 bits differ
+        near = A ^ (2 ** 30 - 1)  # 30 of 256 bits differ
         together = build_shots([row("/a/1.JPG", A, taken=100), row("/a/2.JPG", near, taken=110)])
         apart = build_shots([row("/a/1.JPG", A, taken=100), row("/a/2.JPG", near, taken=9000)])
         self.assertEqual(names(group_shots(together)), [("similar", ["1.JPG", "2.JPG"])])
@@ -45,6 +47,16 @@ class GroupingTest(unittest.TestCase):
         (g,) = group_shots(shots)
         self.assertEqual([s["name"] for s in g["shots"]], ["1.JPG", "1s.JPG"])  # bigger one ranked best
         self.assertFalse(any(s["suggest_trash"] for s in g["shots"]))
+
+    def test_same_shape_but_different_colours_do_not_group(self):
+        shots = build_shots([row("/a/1.JPG", A, taken=1, color=40), row("/a/2.JPG", A, taken=2, color=160)])
+        self.assertEqual(group_shots(shots), [])
+
+    def test_gradual_drift_does_not_chain_into_one_group(self):
+        step = 2 ** 30 - 1  # each shot differs from the previous by 30 bits, in a new place
+        hashes = [A, A ^ step, A ^ step ^ (step << 40), A ^ step ^ (step << 40) ^ (step << 80)]
+        shots = build_shots([row("/a/%d.JPG" % i, h, taken=i) for i, h in enumerate(hashes)])
+        self.assertTrue(all(len(g["shots"]) < 4 for g in group_shots(shots)))
 
     def test_photo_and_video_never_group(self):
         shots = build_shots([row("/a/1.JPG", A, taken=1), row("/a/2.MOV", A, taken=2, kind="video")])

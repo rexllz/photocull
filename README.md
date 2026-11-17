@@ -27,7 +27,7 @@ files.
 | Group | Meaning | Starts out marked for Trash? |
 |---|---|---|
 | **Identical copies** | Same file content, e.g. the same card imported twice | Yes, all but the best copy |
-| **Similar shots** | Look alike and were taken within 30 seconds (bursts, retakes), or are near-identical at any time (resized or re-saved copies) | No, you choose |
+| **Similar shots** | Look alike in both shape and colour and were taken within 30 seconds (bursts, retakes), or are near-identical at any time (resized or re-saved copies) | No, you choose |
 
 A RAW file and its same-named JPEG in the same folder (`DSC_0001.NEF` +
 `DSC_0001.JPG`) count as one shot and are kept or trashed together.
@@ -57,6 +57,14 @@ The toolbar has two controls, applied instantly without rescanning:
 
 Command line options: `--port N` (default 8777) and `--no-open` (don't open the
 browser).
+
+## How similarity is judged
+
+Each shot gets two fingerprints from a tiny version of the picture: a 256-bit
+shape hash (where it gets brighter or darker) and a 4x4 grid of average colours.
+Two shots count as similar only when both agree. A shot joins a burst only if it
+resembles the burst's first shot as well as its latest, so a slowly changing
+sequence can't chain unrelated pictures into one group.
 
 ## Notes
 
