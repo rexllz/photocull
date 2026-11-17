@@ -84,6 +84,7 @@
            border-radius: 5px; padding: 3px 8px; }
   .badge.exact { background: #3a2229; color: #ff9eab; }
   .badge.similar { background: #1f2f47; color: #9dc9ff; }
+  .badge.unique { background: #2a2d33; color: #c9ced6; }
   .gmeta { color: var(--dim); flex: 1; }
   .gwarn { color: var(--accent); font-weight: 600; }
   .ghead button { padding: 4px 10px; font-size: 13px; }
@@ -175,6 +176,7 @@
         <button data-filter="exact">Identical<i></i></button>
         <button data-filter="similar">Similar<i></i></button>
         <button data-filter="video">Videos<i></i></button>
+        <button data-filter="unique" title="Shots with no look-alike">Unique<i></i></button>
       </div>
       <div id="stats"></div>
       <button id="trash" class="danger" disabled>Move to Trash</button>
@@ -217,7 +219,7 @@
 <script>
 const TOKEN = "__TOKEN__";
 const PAGE = 40;
-let state = {}, groups = [], marks = new Map(), filter = "all", shown = [], rendered = 0, focus = 0;
+let state = {}, groups = [], singles = [], marks = new Map(), filter = "all", shown = [], rendered = 0, focus = 0;
 let box = null;       // {group, i} while viewing full size
 let pollTimer = null;
 
@@ -287,7 +289,7 @@ async function openFolder(path) {
   try {
     const r = await post("/api/open", { path: path });
     if (r.error) { $("werror").textContent = r.error; return; }
-    marks = new Map(); filter = "all";
+    marks = new Map(); filter = "all"; history.replaceState(null, "", "#all");
     await sync(false);
   } catch (e) { $("werror").textContent = e.message; }
 }
@@ -304,9 +306,11 @@ $("refresh").onclick = async () => { await post("/api/open", { path: state.root 
 
 /* ---------- review ---------- */
 async function loadGroups(keepMarks) {
-  groups = (await (await fetch("/api/groups")).json()).groups;
+  const data = await (await fetch("/api/groups")).json();
+  groups = data.groups; singles = data.singles;
+  unique.shots = singles;
   const old = marks; marks = new Map();
-  for (const g of groups) for (const s of g.shots)
+  for (const g of groups.concat([unique])) for (const s of g.shots)
     marks.set(s.id, keepMarks && old.has(s.id) ? old.get(s.id) : s.suggest);
   const name = state.root.slice(state.root.lastIndexOf("/") + 1) || state.root;
   $("folder").textContent = name; $("folder").title = state.root + " — choose another folder";
@@ -319,16 +323,34 @@ async function loadGroups(keepMarks) {
 }
 
 const matches = (g, f) => f === "all" || (f === "video" ? g.shots.some(s => s.video) : g.kind === f);
+const unique = { id: "unique", kind: "unique", shots: [] };  // every shot with no look-alike, as one big set
+const UPAGE = 120;
 
 function applyFilter() {
-  shown = groups.filter(g => matches(g, filter));
+  const isUnique = filter === "unique";
+  shown = isUnique ? [] : groups.filter(g => matches(g, filter));
   document.querySelectorAll("[data-filter]").forEach(b => {
     b.classList.toggle("on", b.dataset.filter === filter);
-    b.querySelector("i").textContent = groups.filter(g => matches(g, b.dataset.filter)).length;
+    b.querySelector("i").textContent = b.dataset.filter === "unique" ? singles.length
+      : groups.filter(g => matches(g, b.dataset.filter)).length;
   });
   $("list").textContent = ""; rendered = 0; focus = 0;
-  const empty = $("empty");
-  empty.hidden = shown.length > 0; $("keys").hidden = !shown.length;
+  $("bestall").hidden = isUnique;
+  const empty = $("empty"), nothing = isUnique ? !singles.length : !shown.length;
+  empty.hidden = !nothing; $("keys").hidden = nothing;
+  if (isUnique) {
+    empty.firstElementChild.textContent = "No unique shots";
+    empty.lastElementChild.textContent = "Every shot in this folder has a look-alike.";
+    if (singles.length) {
+      const card = el("div", "group"); card.dataset.gid = unique.id;
+      const head = el("div", "ghead");
+      head.appendChild(el("span", "badge unique", "Unique shots"));
+      head.appendChild(el("span", "gmeta", singles.length.toLocaleString() + " shots with no look-alike, oldest first. Click any you want to trash."));
+      card.append(head, el("div", "tiles"));
+      $("list").appendChild(card);
+    }
+    renderMore(); updateStats(); return;
+  }
   if (!state.files) { empty.firstElementChild.textContent = "No photos or videos here";
                       empty.lastElementChild.textContent = "Nothing readable was found in this folder. Choose another one from the top left."; }
   else if (!groups.length) { empty.firstElementChild.textContent = "All clean";
@@ -339,6 +361,14 @@ function applyFilter() {
 }
 
 function renderMore() {
+  if (filter === "unique") {
+    const tiles = document.querySelector('.group[data-gid="unique"] .tiles'); if (!tiles) return;
+    const stop = Math.min(singles.length, rendered + UPAGE);
+    for (; rendered < stop; rendered++) {
+      const t = renderTile(unique, singles[rendered], rendered); tiles.appendChild(t); paintTile(t, singles[rendered]);
+    }
+    return;
+  }
   const end = Math.min(shown.length, rendered + PAGE);
   for (; rendered < end; rendered++) $("list").appendChild(renderGroup(shown[rendered], rendered));
   setFocus(focus, false);
@@ -369,7 +399,7 @@ function renderTile(g, s, i) {
   else pic.appendChild(el("span", "nothumb", "No preview"));
   t.appendChild(pic);
   t.appendChild(el("span", "state"));
-  t.appendChild(el("span", "num", String(i + 1)));
+  if (g !== unique) t.appendChild(el("span", "num", String(i + 1)));
   const zoom = el("button", "zoom", s.video ? "Play" : "View");
   zoom.onclick = e => { e.stopPropagation(); openBox(g, i); };
   t.appendChild(zoom);
@@ -377,10 +407,11 @@ function renderTile(g, s, i) {
   const name = el("div", "name", s.name); name.title = s.folder + "/" + s.name;
   cap.appendChild(name);
   cap.appendChild(el("div", "sub", (s.w ? s.w + " × " + s.h + " · " : "") + fmtSize(s.size)));
+  if (g === unique) cap.appendChild(el("div", "sub", fmtTime(s.taken)));
   const folder = el("div", "sub", s.folder === "." ? "top folder" : s.folder); folder.title = s.folder;
   cap.appendChild(folder);
   const tags = el("div", "tags");
-  if (i === 0) tags.appendChild(el("span", "tag best", "Best"));
+  if (i === 0 && g !== unique) tags.appendChild(el("span", "tag best", "Best"));
   if (s.raw) tags.appendChild(el("span", "tag", s.files > 1 ? "RAW + JPG" : "RAW"));
   if (s.video) tags.appendChild(el("span", "tag", "Video"));
   if (s.identical) tags.appendChild(el("span", "tag", "Identical copy"));
@@ -392,14 +423,20 @@ function renderTile(g, s, i) {
 
 const cardOf = g => document.querySelector('.group[data-gid="' + g.id + '"]');
 
+function paintTile(t, s) {
+  const m = marks.get(s.id);
+  t.classList.toggle("marked", m); t.querySelector(".state").textContent = m ? "TRASH" : "KEEP";
+  return m;
+}
+
 function paintGroup(g, card) {
   card = card || cardOf(g); if (!card) return;
   let gone = 0;
   for (const s of g.shots) {
-    const t = card.querySelector('.tile[data-sid="' + s.id + '"]'), m = marks.get(s.id);
-    t.classList.toggle("marked", m); t.querySelector(".state").textContent = m ? "TRASH" : "KEEP";
-    if (m) gone++;
+    const t = card.querySelector('.tile[data-sid="' + s.id + '"]');
+    if (t && paintTile(t, s)) gone++;   // unique shots further down may not be drawn yet
   }
+  if (g === unique) return;
   const allGone = gone === g.shots.length;
   card.classList.toggle("allgone", allGone);
   card.querySelector(".gwarn").textContent = allGone ? "Every shot in this group is marked" : "";
@@ -408,7 +445,7 @@ function paintGroup(g, card) {
 function toggle(g, id) { marks.set(id, !marks.get(id)); paintGroup(g); updateStats(); paintBox(); }
 function keepBest(g) { g.shots.forEach((s, i) => marks.set(s.id, i > 0)); paintGroup(g); updateStats(); }
 function keepAll(g) { g.shots.forEach(s => marks.set(s.id, false)); paintGroup(g); updateStats(); }
-function marked() { const out = []; for (const g of groups) for (const s of g.shots) if (marks.get(s.id)) out.push(s); return out; }
+function marked() { const out = []; for (const g of groups.concat([unique])) for (const s of g.shots) if (marks.get(s.id)) out.push(s); return out; }
 
 function updateStats() {
   const m = marked(), bytes = m.reduce((a, s) => a + s.size, 0);
@@ -452,7 +489,9 @@ $("boxreveal").onclick = () => post("/api/reveal", { id: box.group.shots[box.i].
 $("boxstate").onclick = () => toggle(box.group, box.group.shots[box.i].id);
 
 /* ---------- toolbar actions ---------- */
-document.querySelectorAll("[data-filter]").forEach(b => b.onclick = () => { filter = b.dataset.filter; applyFilter(); });
+document.querySelectorAll("[data-filter]").forEach(b => b.onclick = () => {
+  filter = b.dataset.filter; history.replaceState(null, "", "#" + filter); applyFilter(); });
+if (document.querySelector('[data-filter="' + location.hash.slice(1) + '"]')) filter = location.hash.slice(1);  // keep the tab on reload
 
 async function saveSettings() {
   try {
@@ -469,7 +508,7 @@ $("bestall").onclick = () => {
   shown.forEach(g => { g.shots.forEach((s, i) => marks.set(s.id, i > 0)); paintGroup(g); });
   updateStats();
 };
-$("clear").onclick = () => { groups.forEach(g => { g.shots.forEach(s => marks.set(s.id, false)); paintGroup(g); }); updateStats(); };
+$("clear").onclick = () => { groups.concat([unique]).forEach(g => { g.shots.forEach(s => marks.set(s.id, false)); paintGroup(g); }); updateStats(); };
 $("trash").onclick = async () => {
   const m = marked(); if (!m.length) return;
   const files = m.reduce((a, s) => a + s.files, 0), bytes = m.reduce((a, s) => a + s.size, 0);
@@ -511,7 +550,8 @@ document.addEventListener("keydown", e => {
   e.preventDefault();
 });
 
-new IntersectionObserver(es => { if (es[0].isIntersecting && rendered < shown.length) renderMore(); },
+new IntersectionObserver(es => {
+  if (es[0].isIntersecting && rendered < (filter === "unique" ? singles.length : shown.length)) renderMore(); },
                          { rootMargin: "800px" }).observe($("more"));
 sync(false);
 </script>

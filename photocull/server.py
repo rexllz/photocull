@@ -52,7 +52,7 @@ class App:
         self.status = "idle"  # idle | scanning | ready | error
         self.root = self.error = self.db = self.cache = None
         self.done = self.total = 0
-        self.rows, self.groups, self.shots = [], [], {}
+        self.rows, self.groups, self.shots, self.singles = [], [], {}, []
 
     # ---- scanning -------------------------------------------------------
     def open(self, folder, rescan=False):
@@ -65,7 +65,7 @@ class App:
                 return "A scan is already running."
             self.status, self.root, self.error = "scanning", str(root.resolve()), None
             self.done = self.total = 0
-            self.rows, self.groups, self.shots = [], [], {}
+            self.rows, self.groups, self.shots, self.singles = [], [], {}, []
         threading.Thread(target=self._scan, args=(rescan,), daemon=True).start()
         return None
 
@@ -89,7 +89,11 @@ class App:
     def _group(self):
         shots = grouping.build_shots(self.rows)
         self.groups = grouping.group_shots(shots, threshold=self.threshold, window=self.window)
-        self.shots = {s["id"]: s for g in self.groups for s in g["shots"]}
+        self.shots = {s["id"]: s for s in shots}
+        grouped = {s["id"] for g in self.groups for s in g["shots"]}
+        self.singles = sorted((s for s in shots if s["id"] not in grouped), key=lambda s: s["taken"])
+        for s in self.singles:
+            s["identical"] = s["suggest_trash"] = False
 
     def regroup(self, threshold, window):
         with self.lock:
@@ -106,18 +110,21 @@ class App:
                 "threshold": self.threshold, "window": self.window,
                 "recent": recent_folders()}
 
+    def _shot_json(self, s):
+        return {"id": s["id"], "name": s["name"],
+                "folder": os.path.relpath(s["folder"], self.root),
+                "video": s["video"], "raw": s["has_raw"], "size": s["size"],
+                "w": s["rep"]["w"], "h": s["rep"]["h"], "taken": s["taken"],
+                "files": len(s["files"]), "identical": s["identical"],
+                "suggest": s["suggest_trash"], "thumb": bool(s["rep"]["thumb"])}
+
     def payload(self):
+        """Groups to review, plus every shot that has no look-alike."""
         with self.lock:
-            return {"groups": [
-                {"id": g["id"], "kind": g["kind"], "taken": g["taken"], "shots": [
-                    {"id": s["id"], "name": s["name"],
-                     "folder": os.path.relpath(s["folder"], self.root),
-                     "video": s["video"], "raw": s["has_raw"], "size": s["size"],
-                     "w": s["rep"]["w"], "h": s["rep"]["h"], "taken": s["taken"],
-                     "files": len(s["files"]), "identical": s["identical"],
-                     "suggest": s["suggest_trash"], "thumb": bool(s["rep"]["thumb"])}
-                    for s in g["shots"]]}
-                for g in self.groups]}
+            return {"groups": [{"id": g["id"], "kind": g["kind"], "taken": g["taken"],
+                                "shots": [self._shot_json(s) for s in g["shots"]]}
+                               for g in self.groups],
+                    "singles": [self._shot_json(s) for s in self.singles]}
 
     # ---- actions --------------------------------------------------------
     def trash(self, ids):
@@ -128,13 +135,9 @@ class App:
             moved = {p for p in paths if p not in failed}
             index.forget(self.db, sorted(moved))
             self.rows = [r for r in self.rows if r["path"] not in moved]
-            gone = {s["id"] for s in shots if not any(f["path"] in failed for f in s["files"])}
-            for i in gone:
-                del self.shots[i]
-            for g in self.groups:
-                g["shots"] = [s for s in g["shots"] if s["id"] not in gone]
-            self.groups = [g for g in self.groups if len(g["shots"]) > 1]
-            return {"trashed": len(gone), "files": len(moved), "failed": sorted(failed)}
+            gone = sum(1 for s in shots if not any(f["path"] in failed for f in s["files"]))
+            self._group()  # a group left with one shot becomes a single again
+            return {"trashed": gone, "files": len(moved), "failed": sorted(failed)}
 
     def preview(self, shot):
         """Large JPEG for full-size viewing, made on first view (decodes NEF via the system)."""

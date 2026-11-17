@@ -37,6 +37,10 @@ file, then more pixels, then the larger file, then names without "copy".
 
 ## Reviewing
 
+Tabs: **All**, **Identical**, **Similar** and **Videos** show groups; **Unique**
+shows every shot that has no look-alike, so you can check what was left out and
+trash any of those too.
+
 - Click a shot to switch it between **KEEP** and **TRASH**.
 - **Keep best only** / **Keep all** per group, or for every group shown.
 - **View** opens full size; `←` `→` flip between the shots of a group to compare.
