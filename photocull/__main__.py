@@ -26,8 +26,9 @@ def main():
         server = serve(app, args.port)
     except OSError:
         sys.exit("Port %d is in use; pass --port with another number." % args.port)
-    url = "http://127.0.0.1:%d/" % args.port
-    print("photocull is running at %s   (Ctrl+C to quit)" % url)
+    # The key in the link signs this browser in; without it the page is refused.
+    url = "http://127.0.0.1:%d/?k=%s" % (args.port, app.token)
+    print("photocull is running. Open this link (Ctrl+C to quit):\n  %s" % url, flush=True)
     if not args.no_open:
         webbrowser.open(url)
     try:

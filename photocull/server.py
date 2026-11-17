@@ -7,6 +7,7 @@ import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 from . import grouping, index
 from .trash import move_to_trash
@@ -14,6 +15,11 @@ from .trash import move_to_trash
 WEB = Path(__file__).parent / "web"
 RECENT = Path.home() / "Library" / "Caches" / "photocull" / "recent.json"
 PREVIEW_PX = 2400
+
+DENIED = b"""<!doctype html><meta charset="utf-8"><title>photocull</title>
+<body style="font:16px -apple-system,sans-serif;background:#0e1012;color:#eceef1;padding:60px;text-align:center">
+<h2>This link is missing its key or has expired</h2>
+<p style="color:#99a1ab">Open the link printed in the terminal where photocull is running.</p>"""
 
 _PICK = """
 var app = Application.currentApplication();
@@ -46,7 +52,7 @@ def remember_folder(path):
 
 class App:
     def __init__(self, threshold=10, window=30):
-        self.token = secrets.token_urlsafe(16)
+        self.token = secrets.token_urlsafe(24)
         self.lock = threading.RLock()
         self.threshold, self.window = threshold, window
         self.status = "idle"  # idle | scanning | ready | error
@@ -164,6 +170,18 @@ def make_handler(app):
             host = (self.headers.get("Host") or "").split(":")[0]
             return host in ("127.0.0.1", "localhost")
 
+        def _cookie_name(self):
+            return "photocull_%d" % self.server.server_address[1]
+
+        def _authed(self):
+            """Every request must carry the session key, so other users of this Mac
+            (who can also reach 127.0.0.1) cannot see or trash anything."""
+            for part in (self.headers.get("Cookie") or "").split(";"):
+                name, _, value = part.strip().partition("=")
+                if name == self._cookie_name() and secrets.compare_digest(value, app.token):
+                    return True
+            return False
+
         def _send(self, body, ctype, status=200):
             self.send_response(status)
             self.send_header("Content-Type", ctype)
@@ -218,7 +236,19 @@ def make_handler(app):
         def do_GET(self):
             if not self._local():
                 return self.send_error(403)
-            path = self.path.split("?")[0]
+            parsed = urlsplit(self.path)
+            path = parsed.path
+            key = parse_qs(parsed.query).get("k", [""])[0]
+            if path == "/" and key and secrets.compare_digest(key, app.token):
+                # Swap the key in the link for a cookie, so it leaves the address bar.
+                self.send_response(303)
+                self.send_header("Location", "/")
+                self.send_header("Set-Cookie", "%s=%s; HttpOnly; SameSite=Strict; Path=/"
+                                 % (self._cookie_name(), app.token))
+                self.send_header("Content-Length", "0")
+                return self.end_headers()
+            if not self._authed():
+                return self._send(DENIED, "text/html; charset=utf-8", 403)
             if path == "/":
                 html = (WEB / "index.html").read_text().replace("__TOKEN__", app.token)
                 return self._send(html.encode(), "text/html; charset=utf-8")
@@ -239,7 +269,8 @@ def make_handler(app):
             self.send_error(404)
 
         def do_POST(self):
-            if not self._local() or self.headers.get("X-Token") != app.token:
+            if not self._local() or not self._authed() or \
+                    not secrets.compare_digest(self.headers.get("X-Token") or "", app.token):
                 return self.send_error(403)
             try:
                 data = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")

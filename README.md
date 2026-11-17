@@ -1,111 +1,223 @@
 # photocull
 
-Find duplicate and look-alike photos and videos from a Nikon camera, review them
-side by side, and move the ones you don't want to the Trash in one batch.
+Clear out duplicate and look-alike photos from a camera card or photo folder.
+photocull groups the shots that show the same thing, scores each one for focus,
+tilt and exposure, and lets you move the ones you don't want to the Trash in one
+batch.
 
-Runs locally on macOS with nothing to install: Python 3 from the Xcode command
-line tools, plus the system's own image tools (which read `.NEF` RAW files) and
-Vision framework.
+It runs entirely on your Mac: a small local web page, no account, no upload,
+nothing to install.
 
-## Use
+![Review page: groups of similar shots with scores](docs/review.png)
+
+## Requirements
+
+- macOS (uses the system's image tools and Vision framework)
+- Xcode command line tools, which provide Python 3 and the Swift compiler:
+
+  ```sh
+  xcode-select --install
+  ```
+
+There are no Python packages to install.
+
+## Quick start
 
 ```sh
+git clone https://github.com/rexllz/photocull.git
+cd photocull
 ./photocull.sh
 ```
 
-This starts a local web page and opens it in your browser. Everything happens
-there: choose a folder, watch the scan, review the groups, move shots to the
-Trash. Press `Ctrl+C` in the terminal to quit.
+Your browser opens the start page. Choose a folder (or paste its path), wait for
+the scan, then review. Press `Ctrl+C` in the terminal to quit.
 
-You can also pass a folder to skip the chooser: `./photocull.sh /path/to/photos`.
+![Start page](docs/welcome.png)
 
-The first scan of a folder reads every file, so allow a few minutes for
-thousands of RAW files. Later scans reuse a cache and only read new or changed
-files.
+To skip the chooser, pass the folder: `./photocull.sh /path/to/photos`.
 
-## What gets grouped
+### Try it without your own photos
 
-| Group | Meaning | Starts out marked for Trash? |
-|---|---|---|
-| **Identical copies** | Same file content, e.g. the same card imported twice | Yes, all but the best copy |
-| **Similar shots** | The same scene taken within 30 seconds (bursts, retakes, a subject that moved), or are near-identical at any time (resized or re-saved copies) | No, you choose |
+```sh
+python3 demo/make_demo.py      # draws 17 synthetic "photos" into ./demo-photos
+./photocull.sh demo-photos
+```
 
-A RAW file and its same-named JPEG in the same folder (`DSC_0001.NEF` +
-`DSC_0001.JPG`) count as one shot and are kept or trashed together.
+The demo set contains bursts where one frame is good, one is tilted and one is
+out of focus, plus exact copies and a few one-off scenes. The screenshots in
+this README were taken from it.
 
-## Scores and the "Best" shot
+### What to expect on the first run
 
-Every photo is measured once during the scan, and each shot in a group shows a
-score out of 100 with its three parts:
-
-| Check | Weight | How it is measured |
-|---|---|---|
-| **Focus** | 40% | Edge sharpness (Tenengrad) inside the subject: the faces if there are any, otherwise the region that draws the eye. Shown relative to the sharpest shot in the group. With faces, Apple's face capture quality (blur, eyes, expression) is blended in. |
-| **Level** | 35% | The tilt of the longest straight near-level edge (horizon, shoreline, railing), found with a Hough transform. "Tilt n/a" means no such line exists; the check is then left out of the score. |
-| **Exposure** | 25% | Share of the frame blown to white or crushed to black, plus overall brightness. |
-
-The best shot is listed first: a clearly over- or under-exposed shot is never
-best while another is available; then the highest score wins; ties fall back to
-having a RAW file, more pixels, larger file, and a name without "copy".
-
-The Unique tab shows tilt and exposure only, since focus is judged by comparison
-within a group. Scoring needs the Swift compiler from the Xcode command line
-tools (it builds a small helper on first use); without it the app still works
-and ranks by the fallback rules.
+- The first scan reads every file: allow a few minutes for a few thousand
+  photos. Later scans reuse a cache and only read new or changed files.
+- The first run also compiles a small Swift helper (about 30 seconds, once).
+- macOS may ask whether the terminal can access the folder or removable volume
+  you picked. Allow it, or the scan finds nothing.
 
 ## Reviewing
 
-Tabs: **All**, **Identical** and **Similar** show groups; **Unique**
-shows every shot that has no look-alike, so you can check what was left out and
-trash any of those too.
+Each group shows the shots side by side, best first.
 
 - Click a shot to switch it between **KEEP** and **TRASH**.
-- **Keep best only** / **Keep all** per group, or for every group shown.
-- **View** opens full size; `←` `→` flip between the shots of a group to compare.
+- **Keep best only** / **Keep all** work per group, or on every group shown.
+- **View** opens a shot full size; `←` `→` flip between the shots of a group.
 - **Move to Trash** moves everything marked to the macOS Trash. Nothing is
   deleted permanently until you empty the Trash.
+
+Tabs:
+
+| Tab | Shows |
+|---|---|
+| **All** | Every group |
+| **Identical** | Byte-for-byte copies, e.g. a card imported twice. Extras start out marked for the Trash. |
+| **Similar** | Look-alike shots: bursts, retakes, a subject that moved. Nothing is pre-marked. |
+| **Unique** | Every shot with no look-alike, so you can see what was left out and trash any of those too. |
+
+![Unique tab](docs/unique.png)
+
+Controls:
+
+- **Strict / Loose**: how alike two shots must look to be grouped.
+- **Taken within**: how close in time shots must be to count as one burst.
+- **Refresh**: pick up files added to the folder since the scan.
 
 Keys: `J`/`K` next/previous group, `1`–`9` toggle a shot, `B` keep best only,
 `A` keep all, `Space` full size, `X` toggle while full size, `Esc` close.
 
-## Tuning what counts as similar
+## Scores and the "Best" shot
 
-The toolbar has two controls, applied instantly without rescanning:
+Every shot in a group gets a score out of 100, with its three parts shown:
 
-- **Strict / Loose**: how alike two shots must look to be grouped.
-- **Taken within**: how close in time shots must be to count as one burst.
+| Check | Weight | How it is measured |
+|---|---|---|
+| **Focus** | 40% | Edge sharpness (Tenengrad) inside the subject: the faces if there are any, otherwise the region that draws the eye. Shown relative to the sharpest shot in the group. With faces, Apple's face capture quality (blur, eyes, expression) is blended in. |
+| **Level** | 35% | The tilt of the longest straight near-level edge (horizon, shoreline, railing), found with a Hough transform. "Tilt n/a" means there is no such line; the check is then left out of the score. |
+| **Exposure** | 25% | Share of the frame blown to white or crushed to black, plus overall brightness. |
 
-**Refresh** picks up files added to the folder since the scan.
+The best shot is listed first. A clearly over- or under-exposed shot is never
+best while another is available; then the highest score wins; ties fall back to
+having a RAW file, more pixels, a larger file, and a name without "copy".
 
-Command line options: `--port N` (default 8777) and `--no-open` (don't open the
-browser).
+The score is a starting suggestion, not a verdict. It cannot judge composition
+or expression, and tilt in particular can be fooled by a slope or a receding
+shoreline. Compare by eye before trashing similar shots.
 
-## How similarity is judged
+## How it works
 
-Each shot gets two fingerprints from a tiny version of the picture: a 256-bit
-shape hash (where it gets brighter or darker) and a 4x4 grid of average colours.
+```mermaid
+flowchart LR
+    subgraph Browser
+        P[Review page<br>choose folder · mark · trash]
+    end
+    subgraph "Local server (127.0.0.1 only)"
+        S[HTTP server<br>session key required]
+    end
+    subgraph "Logic"
+        A[Scan<br>thumbnails + capture time] --> B[Fingerprint<br>shape hash + colour grid]
+        A --> Q[Score<br>focus · tilt · exposure]
+        B --> G[Group<br>identical · near-identical · same scene]
+        Q --> R[Rank<br>pick Best]
+        G --> R
+    end
+    C[(Cache<br>~/Library/Caches/photocull)]
+    T[(macOS Trash)]
+    P <-->|JSON + images| S
+    S --> A
+    R --> S
+    A <--> C
+    S -->|marked shots| T
+```
 
-- **Taken moments apart** (within the "Taken within" time): the same scene if
-  the colours sit in the same places, even when the subject moved, or if the
-  shapes line up and the colours are roughly right (an exposure change).
-- **At any other time**: only near-identical pictures, where shape and colour
-  both match closely (resized or re-saved copies).
+1. **Scan.** Walks the folder and uses `sips` (built into macOS) to make a
+   small thumbnail of each photo and read its capture time. Because the system
+   does the decoding, RAW formats macOS understands (such as Nikon `.NEF`) are
+   read the same way as JPEGs.
+2. **Fingerprint.** Each thumbnail is reduced to a 256-bit shape hash (where
+   the picture gets brighter or darker) and a 4×4 grid of average colours.
+3. **Score.** A Swift helper (`photocull/photoscore.swift`) measures focus,
+   tilt and exposure once per photo using the Vision framework.
+4. **Group.** Shots are grouped when:
+   - their file contents are identical; or
+   - shape and colour both match closely, whenever they were taken (resized or
+     re-saved copies); or
+   - they were taken moments apart and show the same scene: the colours sit in
+     the same places even if the subject moved, or the shapes line up across a
+     moderate exposure change.
 
-A shot joins a run only if it resembles the run's first shot as well as its
-latest, so a slowly changing sequence can't chain unrelated pictures together.
+   A shot joins a burst only if it resembles the burst's first shot as well as
+   its latest, so a slowly changing sequence cannot chain unrelated pictures
+   into one group.
+5. **Rank.** Within each group the shots are ordered by score.
+6. **Trash.** Marked files are moved to the Trash with the system's own Trash
+   function, never deleted outright.
 
-## Notes
+A RAW file and its same-named JPEG in one folder (`DSC_0001.NEF` +
+`DSC_0001.JPG`) count as one shot and are kept or trashed together.
 
+Layout:
+
+```
+photocull.sh                launcher
+photocull/__main__.py       command line entry
+photocull/index.py          scan, thumbnails, fingerprints, cache, scoring driver
+photocull/photoscore.swift  focus / tilt / exposure measurements
+photocull/grouping.py       shots, grouping rules, scores and ranking
+photocull/server.py         local web server and actions
+photocull/trash.py          move to Trash
+photocull/web/index.html    the page
+demo/make_demo.py           synthetic demo photos
+tests/                      unit tests
+```
+
+## Privacy and safety
+
+- **Nothing leaves your Mac.** There are no network calls, analytics or
+  third-party services, and the page loads no external scripts or fonts.
+- **Local only.** The server listens on `127.0.0.1`, so other devices on your
+  network cannot reach it.
+- **Session key.** The link printed at start-up contains a random key. Every
+  request must carry it, so other users logged in to the same Mac cannot view
+  your photos or trash anything. Treat the link like a password while the app
+  is running; it stops working when you quit.
+- **Trash, not delete.** Files go to the macOS Trash and can be restored until
+  you empty it. On a camera card or external drive they go to that volume's
+  own Trash and keep using its space until you empty the Trash with the volume
+  connected.
+- **Your photo folder is never written to.** Thumbnails, scores and the index
+  live in `~/Library/Caches/photocull/`; delete that folder to wipe them.
+- **Photos only.** Videos are not scanned or shown, and the Trash action
+  refuses them. (`INCLUDE_VIDEOS` in `photocull/index.py` turns them on; that
+  path is less tested.)
+
+## Limitations
+
+- macOS only.
+- Developed and checked mostly against camera JPEGs. RAW files rely on macOS
+  decoding and have had little testing.
 - Files larger than 4 MB are compared by size plus three 1 MB samples (start,
-  middle, end) rather than every byte, to keep scanning large videos fast.
-- Photos only for now: videos are not scanned or shown, and the Trash action
-  refuses them. (`INCLUDE_VIDEOS` in `photocull/index.py` turns them back on.)
-- The cache lives in `~/Library/Caches/photocull/`; the photo folder is never
-  written to.
-- The review page is only reachable from this Mac (`127.0.0.1`).
+  middle, end) rather than every byte, to keep scanning fast.
+- A retake with a very different exposure may not be grouped with its
+  siblings, because grouping looks at colour.
+- Very plain frames (dark or blank shots) can be grouped as similar.
+- The score weights and thresholds are sensible defaults, not tuned on a large
+  photo collection. They live at the top of `photocull/grouping.py`.
+
+## Command line options
+
+```
+./photocull.sh [folder] [--port N] [--no-open]
+
+--port N     port for the page (default 8777)
+--no-open    don't open the browser; use the printed link
+```
 
 ## Tests
 
 ```sh
 python3 -m unittest discover -s tests
 ```
+
+## Licence
+
+MIT. See [LICENSE](LICENSE).

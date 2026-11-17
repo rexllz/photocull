@@ -130,5 +130,49 @@ class VideoSafetyTest(unittest.TestCase):
         self.assertEqual(result["files"], 0)
 
 
+class AccessTest(unittest.TestCase):
+    def setUp(self):
+        import threading
+        from photocull import server
+        self.app = server.App()
+        self.httpd = server.serve(self.app, 0)
+        self.port = self.httpd.server_address[1]
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+
+    def tearDown(self):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+
+    def request(self, method, path, headers=None, body=None):
+        import http.client
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        conn.request(method, path, body=body, headers=headers or {})
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+        return resp
+
+    def test_page_and_data_need_the_key(self):
+        self.assertEqual(self.request("GET", "/").status, 403)
+        self.assertEqual(self.request("GET", "/api/groups").status, 403)
+        self.assertEqual(self.request("GET", "/?k=wrong").status, 403)
+
+    def test_key_link_signs_in_with_a_cookie(self):
+        resp = self.request("GET", "/?k=" + self.app.token)
+        self.assertEqual(resp.status, 303)
+        cookie = resp.getheader("Set-Cookie").split(";")[0]
+        self.assertIn("HttpOnly", resp.getheader("Set-Cookie"))
+        self.assertEqual(self.request("GET", "/", {"Cookie": cookie}).status, 200)
+        self.assertEqual(self.request("GET", "/api/state", {"Cookie": cookie}).status, 200)
+
+    def test_changes_need_cookie_and_token_and_a_local_host(self):
+        cookie = "photocull_%d=%s" % (self.port, self.app.token)
+        post = lambda h: self.request("POST", "/api/settings", h, body="{}").status
+        self.assertEqual(post({"Cookie": cookie}), 403)
+        self.assertEqual(post({"X-Token": self.app.token}), 403)
+        self.assertEqual(post({"Cookie": cookie, "X-Token": self.app.token}), 200)
+        self.assertEqual(post({"Cookie": cookie, "X-Token": self.app.token, "Host": "evil.example"}), 403)
+
+
 if __name__ == "__main__":
     unittest.main()
