@@ -230,6 +230,7 @@
     #boxinfo { flex-basis: 100%; white-space: normal; font-size: 12px; }
     #boxstage { padding: 0 6px 10px; }
   }
+  .toastbtn { margin-left: 10px; padding: 3px 12px; border-color: var(--focus); color: var(--focus); font-weight: 600; }
   #toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: var(--raised);
            border: 1px solid var(--line2); border-radius: 10px; padding: 11px 18px; display: none; z-index: 30;
            box-shadow: 0 8px 30px rgba(0,0,0,.5); }
@@ -298,7 +299,7 @@
       <button id="refresh" class="ghost" title="Check the folder for new files">Refresh</button>
       <button id="phone" class="ghost" title="Review from a phone on the same Wi-Fi">Phone</button>
       <div class="grow"></div>
-      <button id="bestall" title="In every group shown, mark everything except the best shot">Keep best only in shown groups</button>
+      <button id="bestall" title="In every group shown, move everything except the best shot to the Trash now">Keep best in all shown groups</button>
       <button id="restore" class="ghost" hidden title="Put back the groups you marked as not duplicates"></button>
       <button id="clear">Unmark all</button>
     </div>
@@ -334,7 +335,7 @@
     <div id="more"></div>
     <div id="empty" hidden><h2></h2><p></p></div>
     <p class="keys" id="keys"><kbd>J</kbd> <kbd>K</kbd> next / previous group · <kbd>1</kbd>–<kbd>9</kbd> toggle a shot ·
-      <kbd>B</kbd> keep best only · <kbd>A</kbd> keep all · <kbd>Space</kbd> view full size ·
+      <kbd>B</kbd> keep best, trash the rest · <kbd>A</kbd> keep all (group done) · <kbd>Space</kbd> view full size ·
       <kbd>←</kbd> <kbd>→</kbd> flip · <kbd>X</kbd> toggle · <kbd>Esc</kbd> close</p>
   </main>
 </section>
@@ -396,9 +397,14 @@ async function post(url, body) {
 }
 const getState = async () => (await fetch("/api/state")).json();
 
-function toast(msg) {
+function toast(msg, action, run) {
   const t = $("toast"); t.textContent = msg; t.style.display = "block";
-  clearTimeout(toast.timer); toast.timer = setTimeout(() => t.style.display = "none", 5000);
+  if (action) {   // e.g. Undo: stays up longer so there is time to tap it
+    const b = el("button", "toastbtn", action);
+    b.onclick = () => { t.style.display = "none"; run(); };
+    t.append(" ", b);
+  }
+  clearTimeout(toast.timer); toast.timer = setTimeout(() => t.style.display = "none", action ? 10000 : 5000);
 }
 
 /* ---------- app flow: welcome -> scanning -> review ---------- */
@@ -636,12 +642,13 @@ function renderGroup(g, idx) {
   head.appendChild(el("span", "badge " + g.kind, g.kind === "exact" ? "Identical copies" : "Similar shots"));
   head.appendChild(el("span", "gmeta", g.shots.length + " shots · " + fmtTime(g.taken)));
   head.appendChild(el("span", "gwarn"));
-  const best = el("button", null, "Keep best only"); best.onclick = () => keepBest(g);
-  const all = el("button", null, "Keep all"); all.onclick = () => keepAll(g);
-  const skip = el("button", null, "Not duplicates");
-  skip.title = "Keep every shot and move them to Unique (forgotten when photocull restarts)";
-  skip.onclick = () => skipGroup(g);
-  head.append(best, all, skip);
+  const best = el("button", null, "Keep best");
+  best.title = "Move every shot except the best one to the Trash now (Undo is offered)";
+  best.onclick = () => keepBest(g);
+  const all = el("button", null, "Keep all");
+  all.title = "Keep every shot and mark this group done: it moves to Unique (forgotten when photocull restarts)";
+  all.onclick = () => skipGroup(g);
+  head.append(best, all);
   card.appendChild(head);
   const tiles = el("div", "tiles");
   g.shots.forEach((s, i) => tiles.appendChild(renderTile(g, s, i)));
@@ -736,14 +743,16 @@ function paintGroup(g, card) {
 }
 
 function toggle(g, id) { marks.set(id, !marks.get(id)); paintGroup(g); updateStats(); paintBox(); }
-function keepBest(g) { g.shots.forEach((s, i) => marks.set(s.id, i > 0)); paintGroup(g); updateStats(); }
-function keepAll(g) { g.shots.forEach(s => marks.set(s.id, false)); paintGroup(g); updateStats(); }
+function keepBest(g) {
+  const rest = g.shots.slice(1);
+  trashNow(rest, "Kept " + g.shots[0].name + ", moved " + rest.length + " to the Trash");
+}
 async function skipGroup(g) {
   g.shots.forEach(s => marks.set(s.id, false));
   try {
     state = Object.assign(state, await post("/api/skip", { ids: g.shots.map(s => s.id), skip: true }));
     await loadGroups(true);
-    toast(g.shots.length + " shots kept and moved to Unique. Restore from the toolbar.");
+    toast("Kept all " + g.shots.length + ". Group marked done and moved to Unique.");
   } catch (e) { toast(e.message); }
 }
 $("restore").onclick = async () => {
@@ -875,11 +884,36 @@ $("window").onchange = saveSettings;
 
 $("bestall").onclick = () => {
   if (!shown.length) return;
-  if (!confirm("Mark everything except the best shot in all " + shown.length + " groups shown?\n\nNothing is deleted until you press Move to Trash.")) return;
-  shown.forEach(g => { g.shots.forEach((s, i) => marks.set(s.id, i > 0)); paintGroup(g); });
-  updateStats();
+  const rest = shown.flatMap(g => g.shots.slice(1));
+  if (!confirm("Keep only the best shot in each of the " + shown.length + " groups shown, and move the other " +
+               rest.length + " to the Trash now?\n\nYou can undo right after, or restore them from the Trash.")) return;
+  trashNow(rest, "Kept the best of " + shown.length + " groups, moved " + rest.length + " to the Trash");
 };
 $("clear").onclick = () => { groups.concat([unique, videoSet]).forEach(g => { g.shots.forEach(s => marks.set(s.id, false)); paintGroup(g); }); updateStats(); };
+/* Move shots to the Trash now, then offer Undo. */
+async function trashNow(shotsToGo, label) {
+  if (!shotsToGo.length) return;
+  try {
+    const r = await post("/api/trash", { ids: shotsToGo.map(s => s.id) });
+    const text = (label || "Moved " + r.trashed + " to the Trash") +
+                 (r.failed.length ? ". " + r.failed.length + " files could not be moved." : ".");
+    state = await getState();
+    await loadGroups(true);
+    if (box && isFlat(box.group) && flatView && flatView.shots.length) {
+      box.group = flatView; box.i = Math.min(box.i, flatView.shots.length - 1); showBox();
+    } else if (box) closeBox();
+    if (r.undo) toast(text, "Undo", undoTrash); else toast(text);
+  } catch (e) { toast(e.message); updateStats(); }
+}
+async function undoTrash() {
+  try {
+    const r = await post("/api/undo");
+    state = await getState(); await loadGroups(true);
+    toast(r.restored ? "Put back " + r.restored + " files." + (r.missing ? " " + r.missing + " were no longer in the Trash." : "")
+                     : "Nothing to put back: the Trash may have been emptied.");
+  } catch (e) { toast(e.message); }
+}
+
 $("trash").onclick = async () => {
   const m = marked(); if (!m.length) return;
   const files = m.reduce((a, s) => a + s.files, 0), bytes = m.reduce((a, s) => a + s.size, 0);
@@ -891,17 +925,7 @@ $("trash").onclick = async () => {
   msg += "\n\nYou can restore them from the Trash until you empty it.";
   if (!confirm(msg)) return;
   const btn = $("trash"); btn.disabled = true; btn.textContent = "Moving…";
-  try {
-    const r = await post("/api/trash", { ids: m.map(s => s.id) });
-    toast("Moved " + r.trashed + " shots (" + r.files + " files) to the Trash." +
-          (r.failed.length ? " " + r.failed.length + " files could not be moved." : ""));
-    state = await getState();
-    await loadGroups(true);
-    // Reviewing one by one: stay in the viewer, on the photo after the ones just trashed.
-    if (box && isFlat(box.group) && flatView && flatView.shots.length) {
-      box.group = flatView; box.i = Math.min(box.i, flatView.shots.length - 1); showBox();
-    } else if (box) closeBox();
-  } catch (e) { toast(e.message); updateStats(); }
+  await trashNow(m);
 };
 $("boxtrash").onclick = () => $("trash").onclick();
 
@@ -923,7 +947,7 @@ document.addEventListener("keydown", e => {
   if (k === "j") setFocus(focus + 1, true);
   else if (k === "k") setFocus(focus - 1, true);
   else if (k === "b") keepBest(g);
-  else if (k === "a") keepAll(g);
+  else if (k === "a") skipGroup(g);
   else if (k === " ") openBox(g, 0);
   else if (k >= "1" && k <= "9" && g.shots[+k - 1]) toggle(g, g.shots[+k - 1].id);
   else return;

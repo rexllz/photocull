@@ -68,13 +68,23 @@ this README were taken from it.
 
 Each group shows the shots side by side, best first.
 
-- Click a shot to switch it between **KEEP** and **TRASH**.
-- **Keep best only** / **Keep all** work per group, or on every group shown.
-- **Not duplicates** on a group keeps all its shots and moves them to Unique,
-  tagged "Not a duplicate", so the group stops coming back. This is kept in
+Each group has two buttons that finish it in one tap:
+
+- **Keep best** moves every shot except the best one to the Trash straight
+  away. **Keep best in all shown groups** in the toolbar does the same for
+  every group on screen, after one confirmation.
+- **Keep all** keeps every shot and marks the group done: it leaves the group
+  list and its shots move to Unique, tagged "Not a duplicate". This is kept in
   memory only: it lasts through Refresh and setting changes, and is forgotten
-  when you open another folder or restart photocull. **Restore N skipped**
-  in the toolbar puts the groups back.
+  when you open another folder or restart photocull. **Restore N skipped** in
+  the toolbar brings those groups back.
+
+After anything is moved to the Trash, an **Undo** button appears for ten
+seconds and puts that batch back where it was. Files stay in the macOS Trash
+until you empty it either way.
+
+For anything in between, click a shot to switch it between **KEEP** and
+**TRASH**, then press **Move to Trash**.
 - **View** opens a shot full size; `←` `→` flip between the shots of a group.
 - **Move to Trash** moves everything marked to the macOS Trash. Nothing is
   deleted permanently until you empty the Trash.
@@ -120,8 +130,8 @@ Controls:
 - **Taken within**: how close in time shots must be to count as one burst.
 - **Refresh**: pick up files added to the folder since the scan.
 
-Keys: `J`/`K` next/previous group, `1`–`9` toggle a shot, `B` keep best only,
-`A` keep all, `Space` full size, `X` toggle while full size, `Esc` close.
+Keys: `J`/`K` next/previous group, `1`–`9` toggle a shot, `B` keep best (trash
+the rest), `A` keep all (group done), `Space` full size, `X` toggle while full size, `Esc` close.
 
 ## Review from your phone
 
@@ -144,7 +154,7 @@ You can review on a phone while the photos stay on the Mac:
    allow incoming connections; choose Allow.
 2. Scan the QR code with the phone's camera. The same review page opens in the
    phone's browser, laid out for a small screen: the tabs sit in two rows, and
-   the grouping controls (Strict/Loose, Taken within, Refresh, Keep best only)
+   the grouping controls (Strict/Loose, Taken within, Refresh, Keep best in all)
    fold away under **Options**.
 3. Tap a shot to mark it, tap **View** to see it full size (swipe to flip
    between shots, pinch to zoom), and use **Move to Trash** as on the Mac. Files

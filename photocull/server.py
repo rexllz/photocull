@@ -13,7 +13,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
 
 from . import grouping, index
-from .trash import move_to_trash
+from .trash import move_to_trash, put_back
 
 WEB = Path(__file__).parent / "web"
 RECENT = Path.home() / "Library" / "Caches" / "photocull" / "recent.json"
@@ -126,6 +126,7 @@ class App:
         self.phase = ""
         self.rows, self.groups, self.shots, self.singles = [], [], {}, []
         self.videos = []        # listed for playing, downloading and trashing; never grouped
+        self.last_trash = None  # the most recent Trash batch, so it can be undone
         self.new_previews = 0
         # Shots the user said are not duplicates ("keep all, skip this group"). Memory
         # only, on purpose: forgotten when another folder is opened or the app restarts.
@@ -180,6 +181,7 @@ class App:
             if str(root.resolve()) != self.root:
                 self.skipped = set()   # Refresh of the same folder keeps them
             self.status, self.root, self.error = "scanning", str(root.resolve()), None
+            self.last_trash = None
             self.done = self.total = 0
             self.phase = ""
             self.rows, self.groups, self.shots, self.singles = [], [], {}, []
@@ -201,6 +203,7 @@ class App:
                 self._group()
                 self.status = "ready"
             index.prune_previews(cache, set(self.shots))
+            index.prune_thumbs(cache, {r["thumb"] for r in rows if r["thumb"]})
             remember_folder(self.root)
         except Exception as exc:  # surface any failure in the page instead of dying silently
             self.status, self.error = "error", "Scan failed: %s" % exc
@@ -280,16 +283,35 @@ class App:
             # Only what was explicitly marked: videos are never marked for the user.
             shots = [self.shots[i] for i in ids if i in self.shots]
             paths = [f["path"] for s in shots for f in s["files"]]
-            failed = set(move_to_trash(paths))
-            moved = {p for p in paths if p not in failed}
-            index.forget(self.db, sorted(moved))
+            failed, landed = move_to_trash(paths)
+            failed = set(failed)
+            moved = set(landed)
+            # Remember where each file landed, so this batch can be put back.
+            self.last_trash = {"rows": [r for r in self.rows if r["path"] in moved], "landed": landed}
+            index.forget(self.db, sorted(moved), keep_thumbs=True)   # kept for undo
             for s in shots:   # their full-size previews are no longer needed either
                 if self.cache:
                     (self.cache / "previews" / (s["id"] + ".jpg")).unlink(missing_ok=True)
             self.rows = [r for r in self.rows if r["path"] not in moved]
             gone = sum(1 for s in shots if not any(f["path"] in failed for f in s["files"]))
             self._group()  # a group left with one shot becomes a single again
-            return {"trashed": gone, "files": len(moved), "failed": sorted(failed)}
+            return {"trashed": gone, "files": len(moved), "failed": sorted(failed),
+                    "undo": bool(moved)}
+
+    def undo(self):
+        """Put the most recent Trash batch back where it was."""
+        with self.lock:
+            batch, self.last_trash = self.last_trash, None
+            if not batch:
+                return {"restored": 0, "missing": 0}
+            restored = set(put_back(batch["landed"]))
+            rows = [r for r in batch["rows"] if r["path"] in restored]
+            for r in rows:
+                index._save(self.db, r)
+            self.db.commit()
+            self.rows.extend(rows)
+            self._group()
+            return {"restored": len(restored), "missing": len(batch["landed"]) - len(restored)}
 
     def preview(self, shot):
         """Large JPEG for full-size viewing, made on first view (decodes NEF via the system)."""
@@ -513,7 +535,7 @@ def make_handler(app):
                 # The phone may review and trash within the folder already open. Choosing
                 # folders, Finder and the phone switch itself stay on the Mac.
                 reopen = self.path == "/api/open" and data.get("path") == app.root
-                if self.path not in ("/api/settings", "/api/trash", "/api/skip") and not reopen:
+                if self.path not in ("/api/settings", "/api/trash", "/api/skip", "/api/undo") and not reopen:
                     return self.send_error(403)
             if self.path == "/api/phone":
                 error = app.phone_on() if data.get("on") else app.phone_off()
@@ -533,6 +555,8 @@ def make_handler(app):
                 if not isinstance(ids, list):
                     return self.send_error(400)
                 return self._json(app.trash([i for i in ids if isinstance(i, str)]))
+            if self.path == "/api/undo":
+                return self._json(app.undo())
             if self.path == "/api/skip":
                 ids = data.get("ids")
                 if ids is not None and not (isinstance(ids, list) and all(isinstance(i, str) for i in ids)):

@@ -269,11 +269,21 @@ def prune_previews(cache, keep_ids=None, limit=PREVIEW_CACHE_BYTES):
             pass
 
 
-def forget(db, paths):
+def prune_thumbs(cache, keep):
+    """Delete thumbnails no file refers to any more."""
+    for f in (Path(cache) / "thumbs").glob("*.jpg"):
+        if str(f) not in keep:
+            try:
+                f.unlink()
+            except OSError:
+                pass
+
+
+def forget(db, paths, keep_thumbs=False):
     """Drop files (and their thumbnails) from the cache."""
     for p in paths:
         for (thumb,) in db.execute("SELECT thumb FROM files WHERE path=?", (p,)):
-            if thumb:
+            if thumb and not keep_thumbs:
                 try:
                     os.unlink(thumb)
                 except OSError:

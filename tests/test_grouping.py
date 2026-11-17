@@ -132,6 +132,56 @@ class VideoTest(unittest.TestCase):
         self.assertEqual(app.state()["videos"], 2)
 
 
+class UndoTest(unittest.TestCase):
+    def test_put_back_uses_the_name_given_in_the_trash(self):
+        import os
+        import tempfile
+        from photocull.trash import put_back
+        with tempfile.TemporaryDirectory() as d:
+            original = os.path.join(d, "DSC_0001.JPG")
+            # macOS renames a file whose name is already taken in the Trash.
+            landed = os.path.join(d, "DSC_0001.JPG 00-36-47-048.JPG")
+            with open(landed, "wb") as f:
+                f.write(b"our photo")
+            self.assertEqual(put_back({original: landed, "/nope/x.JPG": None}), [original])
+            self.assertEqual(open(original, "rb").read(), b"our photo")
+
+    def test_trash_then_undo_brings_the_group_back(self):
+        import os
+        import shutil
+        import tempfile
+        from unittest import mock
+        from photocull import index, server
+        with tempfile.TemporaryDirectory() as d:
+            trash = os.path.join(d, "Trash")
+            os.mkdir(trash)
+            app = server.App()
+            app.status, app.root = "ready", d
+            app.db = index.open_db(index.Path(d))
+            app.rows = []
+            for i in range(3):
+                path = os.path.join(d, "%d.JPG" % i)
+                with open(path, "wb") as f:
+                    f.write(b"x" * (10 + i))
+                app.rows.append(row(path, A, taken=i, size=10 + i))
+            app._group()
+            ids = [s["id"] for s in app.groups[0]["shots"][1:]]
+
+            def fake_trash(paths):
+                landed = {}
+                for p in paths:
+                    landed[p] = os.path.join(trash, os.path.basename(p) + " 12-00-00-000.JPG")
+                    shutil.move(p, landed[p])
+                return [], landed
+            with mock.patch.object(server, "move_to_trash", fake_trash):
+                result = app.trash(ids)
+            self.assertEqual(result["files"], 2)
+            self.assertEqual(app.groups, [])
+            self.assertEqual(app.undo()["restored"], 2)
+            self.assertEqual(len(app.groups[0]["shots"]), 3)
+            self.assertEqual(app.undo()["restored"], 0)   # only the latest batch, once
+
+
 class PreviewCacheTest(unittest.TestCase):
     def test_prune_drops_orphans_then_oldest(self):
         import os
