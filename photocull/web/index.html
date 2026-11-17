@@ -13,6 +13,10 @@
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
+  /* Nothing may ever widen the page past the screen (clip, unlike hidden, keeps the
+     sticky top bar working). */
+  body { overflow-x: clip; }
+  #optbtn { display: none; }
   body { margin: 0; background: var(--bg); color: var(--text);
          font: 14px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
          -webkit-font-smoothing: antialiased; }
@@ -195,7 +199,17 @@
     #folder { max-width: 130px; }
     #stats { flex-basis: 100%; text-align: left; order: 5; font-size: 13px; }
     #trash { margin-left: auto; }
-    .seg button { padding: 4px 9px; }
+    /* Tabs: two even rows instead of one row wider than the screen. */
+    #filters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); width: 100%; }
+    #filters button { padding: 6px 2px; white-space: nowrap; font-size: 13px; }
+    #filters .long { display: none; }
+    #folder { margin-right: auto; }
+    #optbtn { display: inline-block; }
+    #optbtn[aria-expanded="true"] { border-color: var(--focus); color: var(--focus); }
+    /* Grouping controls stay folded away until Options is tapped. */
+    body:not(.showopts) .row.opts { display: none; }
+    .notice { flex-wrap: nowrap; justify-content: space-between; text-align: left; }
+    .ghead .gmeta { flex-basis: 100%; order: -1; }
     .ctl input[type=range] { width: 84px; }
     .grow { display: none; }
     main { padding: 12px 12px 70px; }
@@ -209,6 +223,7 @@
     body.size-s .tile .name { font-size: 11px; }
     body.size-s .tile .zoom, body.size-s .tile .pick { font-size: 11px; padding: 1px 6px; bottom: 5px; }
     .findrow input[type=search] { flex: 1 1 100%; }
+    .findrow select { flex: 1 1 0; min-width: 0; max-width: none; }   /* day, order and size share one line */
     .notice { padding: 6px 12px; font-size: 12px; }
     .keys { display: none; }
     #boxbar { flex-wrap: wrap; padding: 10px 12px; gap: 8px; }
@@ -264,13 +279,15 @@
         <button data-filter="exact">Identical<i></i></button>
         <button data-filter="similar">Similar<i></i></button>
         <button data-filter="unique" title="Shots with no look-alike">Unique<i></i></button>
-        <button data-filter="every" title="Every photo, oldest first, to go through one by one">Every photo<i></i></button>
+        <button data-filter="every" title="Every photo, oldest first, to go through one by one">Every<span class="long"> photo</span><i></i></button>
         <button data-filter="video" title="Every video: play, download or trash (not checked for duplicates)">Videos<i></i></button>
       </div>
       <div id="stats"></div>
+      <button id="optbtn" class="ghost" aria-expanded="false">Options</button>
+      <button id="dl" hidden></button>
       <button id="trash" class="danger" disabled>Move to Trash</button>
     </div>
-    <div class="row">
+    <div class="row opts">
       <label class="ctl" title="How alike two shots must look to be grouped">Strict
         <input type="range" id="threshold" min="2" max="16" step="1"> Loose</label>
       <label class="ctl">Taken within
@@ -284,7 +301,6 @@
       <button id="bestall" title="In every group shown, mark everything except the best shot">Keep best only in shown groups</button>
       <button id="restore" class="ghost" hidden title="Put back the groups you marked as not duplicates"></button>
       <button id="clear">Unmark all</button>
-      <button id="dl" hidden></button>
     </div>
     <div class="row findrow">
       <input type="search" id="find" placeholder="Find a file, e.g. 0154" autocomplete="off" spellcheck="false"
@@ -535,6 +551,10 @@ document.querySelectorAll("[data-size]").forEach(b => b.onclick = () => {
   applyFilter();   // redraw so Large switches to sharper pictures
 });
 $("netnotex").onclick = () => { $("netnote").hidden = true; };
+$("optbtn").onclick = () => {
+  const open = document.body.classList.toggle("showopts");
+  $("optbtn").setAttribute("aria-expanded", String(open));
+};
 
 /* ---------- hide the top bar while scrolling down ---------- */
 let lastY = 0;

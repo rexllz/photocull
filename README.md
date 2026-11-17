@@ -143,7 +143,9 @@ You can review on a phone while the photos stay on the Mac:
 1. On the Mac's review page, click **Phone** and confirm. macOS may ask to
    allow incoming connections; choose Allow.
 2. Scan the QR code with the phone's camera. The same review page opens in the
-   phone's browser, laid out for a small screen.
+   phone's browser, laid out for a small screen: the tabs sit in two rows, and
+   the grouping controls (Strict/Loose, Taken within, Refresh, Keep best only)
+   fold away under **Options**.
 3. Tap a shot to mark it, tap **View** to see it full size (swipe to flip
    between shots, pinch to zoom), and use **Move to Trash** as on the Mac. Files
    are moved to the Trash on the Mac; nothing on the phone is touched.
