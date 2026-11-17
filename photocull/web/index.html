@@ -6,120 +6,221 @@
 <title>photocull</title>
 <style>
   :root {
-    --bg: #15171a; --panel: #1e2126; --line: #2e333a; --text: #e8eaed; --dim: #9aa3ad;
-    --keep: #3ecf8e; --trash: #f0556a; --accent: #5aa9ff; --warn: #f5b84a;
+    --bg: #0e1012; --panel: #17191d; --raised: #1f2227; --line: #2a2e35; --line2: #3a4049;
+    --text: #eceef1; --dim: #99a1ab; --faint: #6b727c;
+    --keep: #35c98a; --trash: #f25d70; --accent: #f3b33d; --focus: #6aaeff;
+    --radius: 12px;
   }
   * { box-sizing: border-box; }
+  html, body { height: 100%; }
   body { margin: 0; background: var(--bg); color: var(--text);
-         font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; }
-  button { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line);
-           border-radius: 6px; padding: 5px 11px; cursor: pointer; }
-  button:hover { border-color: var(--dim); }
-  button.primary { background: var(--trash); border-color: var(--trash); color: #fff; font-weight: 600; }
-  button.primary:disabled { opacity: .35; cursor: default; }
-  button.on { background: var(--accent); border-color: var(--accent); color: #08131f; font-weight: 600; }
+         font: 14px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+         -webkit-font-smoothing: antialiased; }
+  button, input, select { font: inherit; color: inherit; }
+  button { background: var(--raised); border: 1px solid var(--line); border-radius: 8px;
+           padding: 6px 12px; cursor: pointer; transition: border-color .12s, background .12s; }
+  button:hover { border-color: var(--line2); background: #262a30; }
+  button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+  button.big { padding: 12px 26px; font-size: 16px; font-weight: 600; border-radius: 10px;
+               background: var(--accent); border-color: var(--accent); color: #241a02; }
+  button.big:hover { background: #ffc558; border-color: #ffc558; }
+  button.danger { background: var(--trash); border-color: var(--trash); color: #fff; font-weight: 600; }
+  button.danger:hover { background: #ff7183; border-color: #ff7183; }
+  button.danger:disabled { opacity: .3; cursor: default; }
+  button.ghost { background: transparent; }
+  .view { display: none; }
+  body[data-view="welcome"] #welcome, body[data-view="scanning"] #scanning { display: flex; }
+  body[data-view="review"] #review { display: block; }
 
-  header { position: sticky; top: 0; z-index: 5; background: rgba(21,23,26,.96);
-           border-bottom: 1px solid var(--line); padding: 10px 16px;
-           display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-  header h1 { font-size: 16px; margin: 0 6px 0 0; }
-  #stats { color: var(--dim); flex: 1; min-width: 200px; }
-  #stats b { color: var(--text); }
-  .chips { display: flex; gap: 6px; }
+  /* ---------- welcome + scanning ---------- */
+  .center { min-height: 100%; flex-direction: column; align-items: center; justify-content: center;
+            padding: 40px 20px; text-align: center; }
+  .logo { width: 68px; height: 68px; margin-bottom: 18px; }
+  .center h1 { font-size: 34px; letter-spacing: -.02em; margin: 0 0 6px; }
+  .center .lead { color: var(--dim); font-size: 16px; margin: 0 0 30px; max-width: 460px; }
+  .or { color: var(--faint); font-size: 12px; margin: 22px 0 8px; }
+  .pathrow { display: flex; gap: 8px; width: min(520px, 100%); }
+  .pathrow input { flex: 1; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; }
+  #recent { width: min(520px, 100%); margin-top: 28px; text-align: left; }
+  #recent h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); margin: 0 0 8px; }
+  #recent button { display: block; width: 100%; text-align: left; margin-bottom: 6px; padding: 9px 12px;
+                   background: var(--panel); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #recent button span { color: var(--dim); }
+  .error { color: var(--trash); margin-top: 16px; min-height: 20px; }
+  #back { margin-top: 26px; }
+  .bar { width: min(520px, 100%); height: 8px; background: var(--raised); border-radius: 4px; overflow: hidden; margin: 6px 0 12px; }
+  .bar div { height: 100%; width: 0; background: var(--accent); border-radius: 4px; transition: width .3s; }
+  .bar.busy div { width: 30%; animation: slide 1.2s infinite ease-in-out; }
+  @keyframes slide { 0% { margin-left: -30%; } 100% { margin-left: 100%; } }
+  .small { color: var(--dim); font-size: 13px; }
+  .mono { font: 12px ui-monospace, Menlo, monospace; color: var(--dim); word-break: break-all; }
 
-  main { padding: 16px; max-width: 1500px; margin: 0 auto; }
-  .hint { color: var(--dim); font-size: 12px; margin: 0 0 14px; }
-  kbd { background: var(--panel); border: 1px solid var(--line); border-radius: 4px;
-        padding: 0 5px; font: 11px ui-monospace, Menlo, monospace; }
+  /* ---------- review ---------- */
+  header { position: sticky; top: 0; z-index: 5; background: rgba(14,16,18,.92); backdrop-filter: blur(10px);
+           border-bottom: 1px solid var(--line); }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 10px 20px; max-width: 1600px; margin: 0 auto; }
+  .row + .row { border-top: 1px solid var(--line); padding-top: 8px; padding-bottom: 8px; }
+  .brand { font-weight: 700; font-size: 16px; letter-spacing: -.01em; display: flex; align-items: center; gap: 8px; }
+  .brand svg { width: 22px; height: 22px; }
+  #folder { max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--dim); }
+  #stats { flex: 1; min-width: 180px; color: var(--dim); text-align: right; }
+  #stats b { color: var(--text); font-weight: 600; }
+  .seg { display: inline-flex; background: var(--panel); border: 1px solid var(--line); border-radius: 9px; padding: 2px; }
+  .seg button { border: 0; background: transparent; border-radius: 7px; padding: 4px 12px; color: var(--dim); }
+  .seg button.on { background: var(--raised); color: var(--text); box-shadow: 0 0 0 1px var(--line2); }
+  .seg button i { font-style: normal; color: var(--faint); margin-left: 5px; font-size: 12px; }
+  .ctl { display: flex; align-items: center; gap: 8px; color: var(--dim); font-size: 13px; }
+  .ctl input[type=range] { width: 130px; accent-color: var(--accent); }
+  .ctl select { background: var(--raised); border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; }
+  .grow { flex: 1; }
 
-  .group { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-           margin-bottom: 14px; padding: 12px; }
-  .group.focus { border-color: var(--accent); }
-  .group.allgone { border-color: var(--warn); }
-  .ghead { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
-  .badge { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
-           border-radius: 4px; padding: 2px 7px; }
-  .badge.exact { background: #3b2630; color: #ff9aa8; }
-  .badge.similar { background: #24324a; color: #9cc8ff; }
+  main { padding: 18px 20px 80px; max-width: 1600px; margin: 0 auto; }
+  .group { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+           margin-bottom: 14px; padding: 14px; }
+  .group.focus { border-color: var(--focus); box-shadow: 0 0 0 1px var(--focus); }
+  .group.allgone { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .ghead { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 12px; }
+  .badge { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+           border-radius: 5px; padding: 3px 8px; }
+  .badge.exact { background: #3a2229; color: #ff9eab; }
+  .badge.similar { background: #1f2f47; color: #9dc9ff; }
   .gmeta { color: var(--dim); flex: 1; }
-  .gwarn { color: var(--warn); font-weight: 600; }
+  .gwarn { color: var(--accent); font-weight: 600; }
+  .ghead button { padding: 4px 10px; font-size: 13px; }
 
-  .tiles { display: flex; flex-wrap: wrap; gap: 10px; }
-  .tile { width: 220px; border: 2px solid var(--line); border-radius: 8px; overflow: hidden;
-          background: #111316; cursor: pointer; position: relative; }
-  .tile .pic { height: 160px; display: flex; align-items: center; justify-content: center; background: #0c0d0f; }
-  .tile img { max-width: 100%; max-height: 160px; display: block; }
-  .tile .nothumb { color: var(--dim); font-size: 12px; }
-  .tile .cap { padding: 6px 8px; font-size: 12px; }
-  .tile .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tiles { display: flex; flex-wrap: wrap; gap: 12px; }
+  .tile { width: 236px; border-radius: 10px; overflow: hidden; background: #101215; cursor: pointer;
+          position: relative; box-shadow: 0 0 0 2px var(--line); transition: box-shadow .12s, transform .12s; }
+  .tile:hover { transform: translateY(-1px); box-shadow: 0 0 0 2px var(--line2); }
+  .tile .pic { height: 176px; display: flex; align-items: center; justify-content: center; background: #08090a; }
+  .tile img { max-width: 100%; max-height: 176px; display: block; transition: opacity .12s, filter .12s; }
+  .tile .nothumb { color: var(--faint); font-size: 12px; }
+  .tile .cap { padding: 8px 10px 10px; font-size: 12px; }
+  .tile .name { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .tile .sub { color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .tile .state { position: absolute; top: 6px; left: 6px; font-size: 11px; font-weight: 700;
-                 border-radius: 4px; padding: 2px 7px; background: var(--keep); color: #06281a; }
-  .tile.marked { border-color: var(--trash); }
-  .tile.marked .pic img { opacity: .35; }
+  .tile .state { position: absolute; top: 8px; left: 8px; font-size: 11px; font-weight: 700; letter-spacing: .04em;
+                 border-radius: 5px; padding: 2px 8px; background: var(--keep); color: #05281a; }
+  .tile.marked { box-shadow: 0 0 0 2px var(--trash); }
+  .tile.marked .pic img { opacity: .3; filter: grayscale(.6); }
   .tile.marked .state { background: var(--trash); color: #fff; }
-  .tile .num { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0,.6);
-               border-radius: 4px; padding: 1px 6px; font-size: 11px; color: var(--dim); }
-  .tile .zoom { position: absolute; top: 128px; right: 6px; padding: 2px 8px; font-size: 12px;
-                background: rgba(0,0,0,.7); }
-  .tags { display: flex; gap: 4px; margin-top: 3px; flex-wrap: wrap; }
-  .tag { font-size: 10px; font-weight: 700; border: 1px solid var(--line); border-radius: 3px;
+  .tile .num { position: absolute; top: 8px; right: 8px; background: rgba(0,0,0,.6); border-radius: 5px;
+               padding: 1px 7px; font-size: 11px; color: var(--dim); }
+  .tile .zoom { position: absolute; top: 140px; right: 8px; padding: 2px 9px; font-size: 12px;
+                background: rgba(0,0,0,.72); border-color: rgba(255,255,255,.18); opacity: 0; }
+  .tile:hover .zoom, .tile .zoom:focus-visible { opacity: 1; }
+  .tags { display: flex; gap: 4px; margin-top: 5px; flex-wrap: wrap; min-height: 17px; }
+  .tag { font-size: 10px; font-weight: 700; border: 1px solid var(--line2); border-radius: 4px;
          padding: 0 5px; color: var(--dim); }
   .tag.best { color: var(--keep); border-color: var(--keep); }
 
-  #empty { text-align: center; color: var(--dim); padding: 80px 20px; font-size: 16px; }
+  #empty { text-align: center; color: var(--dim); padding: 90px 20px; }
+  #empty h2 { color: var(--text); font-size: 22px; margin: 0 0 6px; }
+  .keys { color: var(--faint); font-size: 12px; text-align: center; margin-top: 26px; }
+  kbd { background: var(--raised); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px;
+        font: 11px ui-monospace, Menlo, monospace; color: var(--dim); }
 
-  #box { position: fixed; inset: 0; background: rgba(0,0,0,.93); z-index: 20; display: none;
-         flex-direction: column; }
+  #box { position: fixed; inset: 0; background: rgba(0,0,0,.95); z-index: 20; display: none; flex-direction: column; }
   #box.open { display: flex; }
-  #boxbar { display: flex; gap: 12px; align-items: center; padding: 10px 16px; }
+  #boxbar { display: flex; gap: 12px; align-items: center; padding: 12px 20px; }
   #boxinfo { flex: 1; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #boxinfo b { color: var(--text); }
-  #boxstate { font-weight: 700; border-radius: 4px; padding: 2px 9px; }
-  #boxstage { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 0; padding: 0 16px 16px; }
-  #boxstage img, #boxstage video { max-width: 100%; max-height: 100%; }
-  #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--panel);
-           border: 1px solid var(--line); border-radius: 8px; padding: 10px 16px; display: none; z-index: 30; }
+  #boxstate { font-weight: 700; border: 0; min-width: 92px; }
+  #boxstage { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 0; padding: 0 20px 20px; }
+  #boxstage img, #boxstage video { max-width: 100%; max-height: 100%; border-radius: 4px; }
+  #toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: var(--raised);
+           border: 1px solid var(--line2); border-radius: 10px; padding: 11px 18px; display: none; z-index: 30;
+           box-shadow: 0 8px 30px rgba(0,0,0,.5); }
 </style>
 </head>
-<body>
-<header>
+<body data-view="">
+<svg width="0" height="0" style="position:absolute"><defs>
+  <symbol id="logo" viewBox="0 0 64 64"><circle cx="32" cy="32" r="29" fill="none" stroke="#f3b33d" stroke-width="5"/>
+    <circle cx="32" cy="32" r="13" fill="#f3b33d"/><circle cx="27" cy="27" r="4" fill="#0e1012" opacity=".55"/></symbol>
+</defs></svg>
+
+<!-- ============ choose a folder ============ -->
+<section id="welcome" class="view center">
+  <svg class="logo"><use href="#logo"/></svg>
   <h1>photocull</h1>
-  <div id="stats">Loading…</div>
-  <div class="chips">
-    <button data-filter="all" class="on">All</button>
-    <button data-filter="exact">Identical</button>
-    <button data-filter="similar">Similar</button>
-    <button data-filter="video">Videos</button>
-  </div>
-  <button id="bestall" title="In every group shown, keep only the best shot">Keep best only (shown groups)</button>
-  <button id="clear">Unmark all</button>
-  <button id="trash" class="primary" disabled>Move to Trash</button>
-</header>
-<main>
-  <p class="hint">Click a shot to mark it for the Trash or keep it. Extra identical copies start out marked.
-    Keys: <kbd>J</kbd>/<kbd>K</kbd> next/previous group · <kbd>1</kbd>–<kbd>9</kbd> toggle a shot ·
-    <kbd>B</kbd> keep best only · <kbd>A</kbd> keep all · <kbd>Space</kbd> compare full size
-    (<kbd>←</kbd>/<kbd>→</kbd> flip, <kbd>X</kbd> toggle, <kbd>Esc</kbd> close).</p>
-  <div id="list"></div>
-  <div id="more"></div>
-  <div id="empty" hidden></div>
-</main>
+  <p class="lead">Find duplicate and look-alike shots from your camera, compare them, and clear them out in one go.</p>
+  <button id="pick" class="big">Choose a folder…</button>
+  <div class="or">or paste a folder path</div>
+  <form class="pathrow" id="pathform">
+    <input id="path" placeholder="/Volumes/NIKON/DCIM" spellcheck="false" autocomplete="off">
+    <button>Open</button>
+  </form>
+  <div class="error" id="werror"></div>
+  <div id="recent" hidden><h2>Recent folders</h2><div id="recentlist"></div></div>
+  <button id="back" class="ghost" hidden>Back to review</button>
+</section>
+
+<!-- ============ scanning ============ -->
+<section id="scanning" class="view center">
+  <svg class="logo"><use href="#logo"/></svg>
+  <h1 style="font-size:24px">Reading your photos</h1>
+  <p class="mono" id="scanroot"></p>
+  <div class="bar busy" id="bar"><div></div></div>
+  <div id="scancount">Looking for photos and videos…</div>
+  <p class="small">The first scan of a folder takes a while, especially with RAW files.<br>Next time only new files are read.</p>
+</section>
+
+<!-- ============ review ============ -->
+<section id="review" class="view">
+  <header>
+    <div class="row">
+      <div class="brand"><svg><use href="#logo"/></svg>photocull</div>
+      <button id="folder" class="ghost" title="Choose another folder"></button>
+      <div class="seg" id="filters">
+        <button data-filter="all" class="on">All<i></i></button>
+        <button data-filter="exact">Identical<i></i></button>
+        <button data-filter="similar">Similar<i></i></button>
+        <button data-filter="video">Videos<i></i></button>
+      </div>
+      <div id="stats"></div>
+      <button id="trash" class="danger" disabled>Move to Trash</button>
+    </div>
+    <div class="row">
+      <label class="ctl" title="How alike two shots must look to be grouped">Strict
+        <input type="range" id="threshold" min="2" max="20" step="1"> Loose</label>
+      <label class="ctl">Taken within
+        <select id="window">
+          <option value="5">5 seconds</option><option value="30">30 seconds</option>
+          <option value="120">2 minutes</option><option value="600">10 minutes</option>
+          <option value="3600">1 hour</option>
+        </select></label>
+      <button id="refresh" class="ghost" title="Check the folder for new files">Refresh</button>
+      <div class="grow"></div>
+      <button id="bestall" title="In every group shown, mark everything except the best shot">Keep best only in shown groups</button>
+      <button id="clear">Unmark all</button>
+    </div>
+  </header>
+  <main>
+    <div id="list"></div>
+    <div id="more"></div>
+    <div id="empty" hidden><h2></h2><p></p></div>
+    <p class="keys" id="keys"><kbd>J</kbd> <kbd>K</kbd> next / previous group · <kbd>1</kbd>–<kbd>9</kbd> toggle a shot ·
+      <kbd>B</kbd> keep best only · <kbd>A</kbd> keep all · <kbd>Space</kbd> view full size ·
+      <kbd>←</kbd> <kbd>→</kbd> flip · <kbd>X</kbd> toggle · <kbd>Esc</kbd> close</p>
+  </main>
+</section>
+
 <div id="box">
   <div id="boxbar">
     <div id="boxinfo"></div>
-    <span id="boxstate"></span>
+    <button id="boxstate" title="Click to switch (X)"></button>
     <button id="boxreveal">Show in Finder</button>
     <button id="boxclose">Close</button>
   </div>
   <div id="boxstage"></div>
 </div>
 <div id="toast"></div>
+
 <script>
 const TOKEN = "__TOKEN__";
 const PAGE = 40;
-let groups = [], marks = new Map(), filter = "all", shown = [], rendered = 0, focus = 0;
-let box = null; // {group, i}
+let state = {}, groups = [], marks = new Map(), filter = "all", shown = [], rendered = 0, focus = 0;
+let box = null;       // {group, i} while viewing full size
+let pollTimer = null;
 
 const $ = id => document.getElementById(id);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls;
@@ -127,35 +228,114 @@ const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls)
 const fmtSize = n => n >= 1e9 ? (n / 1e9).toFixed(2) + " GB" : n >= 1e6 ? (n / 1e6).toFixed(1) + " MB"
                                                              : Math.max(1, Math.round(n / 1e3)) + " KB";
 const fmtTime = t => new Date(t * 1000).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+const fmtNum = n => n.toLocaleString();
+const setView = v => { document.body.dataset.view = v; };
 
 async function post(url, body) {
-  const r = await fetch(url, { method: "POST", body: JSON.stringify(body),
+  const r = await fetch(url, { method: "POST", body: JSON.stringify(body || {}),
                                headers: { "Content-Type": "application/json", "X-Token": TOKEN } });
   if (!r.ok) throw new Error("Request failed (" + r.status + ")");
   return r.json();
 }
+const getState = async () => (await fetch("/api/state")).json();
 
 function toast(msg) {
   const t = $("toast"); t.textContent = msg; t.style.display = "block";
   clearTimeout(toast.timer); toast.timer = setTimeout(() => t.style.display = "none", 5000);
 }
 
-async function load(keepMarks) {
-  const data = await (await fetch("/api/groups")).json();
-  groups = data.groups;
+/* ---------- app flow: welcome -> scanning -> review ---------- */
+async function sync(keepMarks) {
+  state = await getState();
+  clearTimeout(pollTimer);
+  if (state.status === "scanning") {
+    setView("scanning");
+    $("scanroot").textContent = state.root;
+    const bar = $("bar");
+    if (state.total) {
+      bar.classList.remove("busy");
+      bar.firstElementChild.style.width = (100 * state.done / state.total).toFixed(1) + "%";
+      $("scancount").textContent = fmtNum(state.done) + " of " + fmtNum(state.total) + " new files read";
+    } else {
+      bar.classList.add("busy"); bar.firstElementChild.style.width = "";
+      $("scancount").textContent = "Looking for photos and videos…";
+    }
+    pollTimer = setTimeout(sync, 400);
+  } else if (state.status === "ready") {
+    await loadGroups(keepMarks);
+    setView("review");
+  } else {
+    showWelcome(state.error);
+  }
+}
+
+function showWelcome(error) {
+  $("werror").textContent = error || "";
+  const list = $("recentlist"); list.textContent = "";
+  for (const p of state.recent || []) {
+    const b = el("button"), cut = p.lastIndexOf("/");
+    b.append(el("span", null, p.slice(0, cut + 1)), p.slice(cut + 1)); b.title = p;
+    b.onclick = () => openFolder(p);
+    list.appendChild(b);
+  }
+  $("recent").hidden = !(state.recent || []).length;
+  $("back").hidden = state.status !== "ready";
+  setView("welcome");
+}
+
+async function openFolder(path) {
+  if (!path) return;
+  try {
+    const r = await post("/api/open", { path: path });
+    if (r.error) { $("werror").textContent = r.error; return; }
+    marks = new Map(); filter = "all";
+    await sync(false);
+  } catch (e) { $("werror").textContent = e.message; }
+}
+
+$("pick").onclick = async () => {
+  $("werror").textContent = "";
+  try { const r = await post("/api/pick"); if (r.path) openFolder(r.path); }
+  catch (e) { $("werror").textContent = e.message; }
+};
+$("pathform").onsubmit = e => { e.preventDefault(); openFolder($("path").value.trim()); };
+$("back").onclick = () => setView("review");
+$("folder").onclick = () => showWelcome();
+$("refresh").onclick = async () => { await post("/api/open", { path: state.root }); sync(true); };
+
+/* ---------- review ---------- */
+async function loadGroups(keepMarks) {
+  groups = (await (await fetch("/api/groups")).json()).groups;
   const old = marks; marks = new Map();
   for (const g of groups) for (const s of g.shots)
     marks.set(s.id, keepMarks && old.has(s.id) ? old.get(s.id) : s.suggest);
-  document.title = "photocull — " + data.root;
+  const name = state.root.slice(state.root.lastIndexOf("/") + 1) || state.root;
+  $("folder").textContent = name; $("folder").title = state.root + " — choose another folder";
+  document.title = "photocull — " + name;
+  $("threshold").value = state.threshold;
+  const win = $("window");
+  if (![...win.options].some(o => +o.value === state.window)) win.add(new Option(state.window + " seconds", state.window));
+  win.value = state.window;
   applyFilter();
 }
 
+const matches = (g, f) => f === "all" || (f === "video" ? g.shots.some(s => s.video) : g.kind === f);
+
 function applyFilter() {
-  shown = groups.filter(g => filter === "all" || (filter === "video" ? g.shots.some(s => s.video) : g.kind === filter));
+  shown = groups.filter(g => matches(g, filter));
+  document.querySelectorAll("[data-filter]").forEach(b => {
+    b.classList.toggle("on", b.dataset.filter === filter);
+    b.querySelector("i").textContent = groups.filter(g => matches(g, b.dataset.filter)).length;
+  });
   $("list").textContent = ""; rendered = 0; focus = 0;
   const empty = $("empty");
-  empty.hidden = shown.length > 0;
-  empty.textContent = groups.length ? "No groups of this kind." : "No duplicates or similar shots found. Nothing to clean up.";
+  empty.hidden = shown.length > 0; $("keys").hidden = !shown.length;
+  if (!state.files) { empty.firstElementChild.textContent = "No photos or videos here";
+                      empty.lastElementChild.textContent = "Nothing readable was found in this folder. Choose another one from the top left."; }
+  else if (!groups.length) { empty.firstElementChild.textContent = "All clean";
+                             empty.lastElementChild.textContent = fmtNum(state.files) + " files checked, with no duplicates or look-alike shots. Try a looser setting to catch more."; }
+  else { empty.firstElementChild.textContent = "Nothing in this view";
+         empty.lastElementChild.textContent = "No groups of this kind."; }
   renderMore(); updateStats();
 }
 
@@ -197,12 +377,12 @@ function renderTile(g, s, i) {
   const cap = el("div", "cap");
   const name = el("div", "name", s.name); name.title = s.folder + "/" + s.name;
   cap.appendChild(name);
-  cap.appendChild(el("div", "sub", (s.w ? s.w + "×" + s.h + " · " : "") + fmtSize(s.size)));
-  const folder = el("div", "sub", s.folder === "." ? "(top folder)" : s.folder); folder.title = s.folder;
+  cap.appendChild(el("div", "sub", (s.w ? s.w + " × " + s.h + " · " : "") + fmtSize(s.size)));
+  const folder = el("div", "sub", s.folder === "." ? "top folder" : s.folder); folder.title = s.folder;
   cap.appendChild(folder);
   const tags = el("div", "tags");
   if (i === 0) tags.appendChild(el("span", "tag best", "Best"));
-  if (s.raw) tags.appendChild(el("span", "tag", s.files > 1 ? "RAW+JPG" : "RAW"));
+  if (s.raw) tags.appendChild(el("span", "tag", s.files > 1 ? "RAW + JPG" : "RAW"));
   if (s.video) tags.appendChild(el("span", "tag", "Video"));
   if (s.identical) tags.appendChild(el("span", "tag", "Identical copy"));
   cap.appendChild(tags);
@@ -211,7 +391,7 @@ function renderTile(g, s, i) {
   return t;
 }
 
-function cardOf(g) { return document.querySelector('.group[data-gid="' + g.id + '"]'); }
+const cardOf = g => document.querySelector('.group[data-gid="' + g.id + '"]');
 
 function paintGroup(g, card) {
   card = card || cardOf(g); if (!card) return;
@@ -229,17 +409,15 @@ function paintGroup(g, card) {
 function toggle(g, id) { marks.set(id, !marks.get(id)); paintGroup(g); updateStats(); paintBox(); }
 function keepBest(g) { g.shots.forEach((s, i) => marks.set(s.id, i > 0)); paintGroup(g); updateStats(); }
 function keepAll(g) { g.shots.forEach(s => marks.set(s.id, false)); paintGroup(g); updateStats(); }
-
 function marked() { const out = []; for (const g of groups) for (const s of g.shots) if (marks.get(s.id)) out.push(s); return out; }
 
 function updateStats() {
   const m = marked(), bytes = m.reduce((a, s) => a + s.size, 0);
-  const shots = groups.reduce((a, g) => a + g.shots.length, 0);
   const st = $("stats"); st.textContent = "";
-  st.append(el("b", null, String(groups.length)), " groups · ", el("b", null, String(shots)), " shots · ",
-            el("b", null, String(m.length)), " marked" + (m.length ? " (frees " + fmtSize(bytes) + ")" : ""));
+  st.append(el("b", null, fmtNum(state.files)), " files · ", el("b", null, fmtNum(groups.length)), " groups · ",
+            el("b", null, fmtNum(m.length)), " marked" + (m.length ? ", frees " + fmtSize(bytes) : ""));
   const btn = $("trash"); btn.disabled = !m.length;
-  btn.textContent = m.length ? "Move " + m.length + " to Trash" : "Move to Trash";
+  btn.textContent = m.length ? "Move " + fmtNum(m.length) + " to Trash" : "Move to Trash";
 }
 
 function setFocus(i, scroll) {
@@ -264,22 +442,28 @@ function paintBox() {
   if (!box) return;
   const s = box.group.shots[box.i], m = marks.get(s.id), info = $("boxinfo");
   info.textContent = "";
-  info.append(el("b", null, (box.i + 1) + " / " + box.group.shots.length + "  " + s.name),
-              "  ·  " + (s.w ? s.w + "×" + s.h + " · " : "") + fmtSize(s.size) + " · " + fmtTime(s.taken) + " · " + s.folder);
+  info.append(el("b", null, (box.i + 1) + " of " + box.group.shots.length + "   " + s.name),
+              "   " + (s.w ? s.w + " × " + s.h + " · " : "") + fmtSize(s.size) + " · " + fmtTime(s.taken) + " · " + s.folder);
   const st = $("boxstate"); st.textContent = m ? "TRASH" : "KEEP";
-  st.style.background = m ? "var(--trash)" : "var(--keep)"; st.style.color = m ? "#fff" : "#06281a";
+  st.style.background = m ? "var(--trash)" : "var(--keep)"; st.style.color = m ? "#fff" : "#05281a";
 }
 function stepBox(d) { const n = box.group.shots.length; box.i = (box.i + d + n) % n; showBox(); }
 $("boxclose").onclick = closeBox;
 $("boxreveal").onclick = () => post("/api/reveal", { id: box.group.shots[box.i].id });
 $("boxstate").onclick = () => toggle(box.group, box.group.shots[box.i].id);
 
-/* ---------- actions ---------- */
-document.querySelectorAll("[data-filter]").forEach(b => b.onclick = () => {
-  filter = b.dataset.filter;
-  document.querySelectorAll("[data-filter]").forEach(x => x.classList.toggle("on", x === b));
-  applyFilter();
-});
+/* ---------- toolbar actions ---------- */
+document.querySelectorAll("[data-filter]").forEach(b => b.onclick = () => { filter = b.dataset.filter; applyFilter(); });
+
+async function saveSettings() {
+  try {
+    state = await post("/api/settings", { threshold: +$("threshold").value, window: +$("window").value });
+    await loadGroups(true);
+  } catch (e) { toast(e.message); }
+}
+$("threshold").onchange = saveSettings;
+$("window").onchange = saveSettings;
+
 $("bestall").onclick = () => {
   if (!shown.length) return;
   if (!confirm("Mark everything except the best shot in all " + shown.length + " groups shown?\n\nNothing is deleted until you press Move to Trash.")) return;
@@ -300,12 +484,14 @@ $("trash").onclick = async () => {
     const r = await post("/api/trash", { ids: m.map(s => s.id) });
     toast("Moved " + r.trashed + " shots (" + r.files + " files) to the Trash." +
           (r.failed.length ? " " + r.failed.length + " files could not be moved." : ""));
-    await load(true);
+    state = await getState();
+    await loadGroups(true);
   } catch (e) { toast(e.message); updateStats(); }
 };
 
 document.addEventListener("keydown", e => {
-  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.metaKey || e.ctrlKey || e.altKey || document.body.dataset.view !== "review") return;
+  if (/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return;
   const k = e.key.toLowerCase();
   if (box) {
     if (k === "escape") closeBox();
@@ -328,7 +514,7 @@ document.addEventListener("keydown", e => {
 
 new IntersectionObserver(es => { if (es[0].isIntersecting && rendered < shown.length) renderMore(); },
                          { rootMargin: "800px" }).observe($("more"));
-load(false);
+sync(false);
 </script>
 </body>
 </html>

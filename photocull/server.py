@@ -1,4 +1,4 @@
-"""Local-only web server behind the review page."""
+"""Local-only web server: the whole app (pick folder, scan, review, trash) lives in the page."""
 import json
 import mimetypes
 import os
@@ -8,52 +8,136 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import index
+from . import grouping, index
 from .trash import move_to_trash
 
 WEB = Path(__file__).parent / "web"
+RECENT = Path.home() / "Library" / "Caches" / "photocull" / "recent.json"
 PREVIEW_PX = 2400
+
+_PICK = """
+var app = Application.currentApplication();
+app.includeStandardAdditions = true;
+app.activate();
+app.chooseFolder({withPrompt: "Choose the folder with your photos and videos"}).toString();
+"""
+
+
+def pick_folder():
+    """Show the native macOS folder chooser. None if cancelled."""
+    proc = subprocess.run(["osascript", "-l", "JavaScript", "-e", _PICK],
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    path = proc.stdout.decode().strip()
+    return path if proc.returncode == 0 and path else None
+
+
+def recent_folders():
+    try:
+        return [p for p in json.loads(RECENT.read_text()) if os.path.isdir(p)]
+    except (OSError, ValueError):
+        return []
+
+
+def remember_folder(path):
+    paths = [path] + [p for p in recent_folders() if p != path]
+    RECENT.parent.mkdir(parents=True, exist_ok=True)
+    RECENT.write_text(json.dumps(paths[:6]))
 
 
 class App:
-    def __init__(self, root, groups, db, cache):
-        self.root = str(root)
-        self.groups = groups
-        self.db = db
-        self.cache = cache
+    def __init__(self, threshold=10, window=30):
         self.token = secrets.token_urlsafe(16)
-        self.lock = threading.Lock()
-        self.shots = {s["id"]: s for g in groups for s in g["shots"]}
+        self.lock = threading.RLock()
+        self.threshold, self.window = threshold, window
+        self.status = "idle"  # idle | scanning | ready | error
+        self.root = self.error = self.db = self.cache = None
+        self.done = self.total = 0
+        self.rows, self.groups, self.shots = [], [], {}
+
+    # ---- scanning -------------------------------------------------------
+    def open(self, folder, rescan=False):
+        """Start scanning a folder in the background. Returns an error message or None."""
+        root = Path(folder or "").expanduser()
+        if not folder or not root.is_dir():
+            return "That folder doesn't exist."
+        with self.lock:
+            if self.status == "scanning":
+                return "A scan is already running."
+            self.status, self.root, self.error = "scanning", str(root.resolve()), None
+            self.done = self.total = 0
+            self.rows, self.groups, self.shots = [], [], {}
+        threading.Thread(target=self._scan, args=(rescan,), daemon=True).start()
+        return None
+
+    def _progress(self, done, total):
+        self.done, self.total = done, total
+
+    def _scan(self, rescan):
+        try:
+            cache = index.cache_dir(self.root)
+            db = index.open_db(cache)
+            rows = index.scan(self.root, db, cache, self._progress, rescan=rescan)
+            index.fill_qhashes(rows, db)
+            with self.lock:
+                self.db, self.cache, self.rows = db, cache, rows
+                self._group()
+                self.status = "ready"
+            remember_folder(self.root)
+        except Exception as exc:  # surface any failure in the page instead of dying silently
+            self.status, self.error = "error", "Scan failed: %s" % exc
+
+    def _group(self):
+        shots = grouping.build_shots(self.rows)
+        self.groups = grouping.group_shots(shots, threshold=self.threshold, window=self.window)
+        self.shots = {s["id"]: s for g in self.groups for s in g["shots"]}
+
+    def regroup(self, threshold, window):
+        with self.lock:
+            self.threshold = max(0, min(32, int(threshold)))
+            self.window = max(1, min(86400, int(window)))
+            if self.status == "ready":
+                self._group()
+
+    # ---- data for the page ----------------------------------------------
+    def state(self):
+        return {"status": self.status, "root": self.root, "error": self.error,
+                "done": self.done, "total": self.total, "files": len(self.rows),
+                "unreadable": sum(1 for r in self.rows if not r["dhash"]),
+                "threshold": self.threshold, "window": self.window,
+                "recent": recent_folders()}
 
     def payload(self):
-        return {"root": self.root, "groups": [
-            {"id": g["id"], "kind": g["kind"], "taken": g["taken"], "shots": [
-                {"id": s["id"], "name": s["name"],
-                 "folder": os.path.relpath(s["folder"], self.root),
-                 "video": s["video"], "raw": s["has_raw"], "size": s["size"],
-                 "w": s["rep"]["w"], "h": s["rep"]["h"], "taken": s["taken"],
-                 "files": len(s["files"]), "identical": s["identical"],
-                 "suggest": s["suggest_trash"], "thumb": bool(s["rep"]["thumb"])}
-                for s in g["shots"]]}
-            for g in self.groups]}
+        with self.lock:
+            return {"groups": [
+                {"id": g["id"], "kind": g["kind"], "taken": g["taken"], "shots": [
+                    {"id": s["id"], "name": s["name"],
+                     "folder": os.path.relpath(s["folder"], self.root),
+                     "video": s["video"], "raw": s["has_raw"], "size": s["size"],
+                     "w": s["rep"]["w"], "h": s["rep"]["h"], "taken": s["taken"],
+                     "files": len(s["files"]), "identical": s["identical"],
+                     "suggest": s["suggest_trash"], "thumb": bool(s["rep"]["thumb"])}
+                    for s in g["shots"]]}
+                for g in self.groups]}
 
+    # ---- actions --------------------------------------------------------
     def trash(self, ids):
         with self.lock:
             shots = [self.shots[i] for i in ids if i in self.shots]
             paths = [f["path"] for s in shots for f in s["files"]]
             failed = set(move_to_trash(paths))
-            index.forget(self.db, [p for p in paths if p not in failed])
+            moved = {p for p in paths if p not in failed}
+            index.forget(self.db, sorted(moved))
+            self.rows = [r for r in self.rows if r["path"] not in moved]
             gone = {s["id"] for s in shots if not any(f["path"] in failed for f in s["files"])}
             for i in gone:
                 del self.shots[i]
             for g in self.groups:
                 g["shots"] = [s for s in g["shots"] if s["id"] not in gone]
             self.groups = [g for g in self.groups if len(g["shots"]) > 1]
-            return {"trashed": len(gone), "files": len(paths) - len(failed),
-                    "failed": sorted(failed)}
+            return {"trashed": len(gone), "files": len(moved), "failed": sorted(failed)}
 
     def preview(self, shot):
-        """Large JPEG for the lightbox, made on first view (decodes NEF via the system)."""
+        """Large JPEG for full-size viewing, made on first view (decodes NEF via the system)."""
         dest = str(self.cache / "previews" / (shot["id"] + ".jpg"))
         if not os.path.exists(dest):
             longest = max(shot["rep"]["w"] or 0, shot["rep"]["h"] or 0) or PREVIEW_PX
@@ -71,13 +155,16 @@ def make_handler(app):
             host = (self.headers.get("Host") or "").split(":")[0]
             return host in ("127.0.0.1", "localhost")
 
-        def _json(self, obj, status=200):
-            body = json.dumps(obj).encode()
+        def _send(self, body, ctype, status=200):
             self.send_response(status)
-            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(body)
+
+        def _json(self, obj, status=200):
+            self._send(json.dumps(obj).encode(), "application/json", status)
 
         def _file(self, path, ctype=None):
             if not path or not os.path.exists(path):
@@ -125,12 +212,9 @@ def make_handler(app):
             path = self.path.split("?")[0]
             if path == "/":
                 html = (WEB / "index.html").read_text().replace("__TOKEN__", app.token)
-                body = html.encode()
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                return self.wfile.write(body)
+                return self._send(html.encode(), "text/html; charset=utf-8")
+            if path == "/api/state":
+                return self._json(app.state())
             if path == "/api/groups":
                 return self._json(app.payload())
             kind, _, shot_id = path.strip("/").partition("/")
@@ -149,9 +233,19 @@ def make_handler(app):
             if not self._local() or self.headers.get("X-Token") != app.token:
                 return self.send_error(403)
             try:
-                data = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)))
+                data = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
             except ValueError:
                 return self.send_error(400)
+            if self.path == "/api/pick":
+                return self._json({"path": pick_folder()})
+            if self.path == "/api/open":
+                return self._json({"error": app.open(data.get("path"), bool(data.get("rescan")))})
+            if self.path == "/api/settings":
+                try:
+                    app.regroup(data.get("threshold", app.threshold), data.get("window", app.window))
+                except (TypeError, ValueError):
+                    return self.send_error(400)
+                return self._json(app.state())
             if self.path == "/api/trash":
                 return self._json(app.trash(data.get("ids", [])))
             if self.path == "/api/reveal":

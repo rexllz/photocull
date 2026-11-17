@@ -9,14 +9,18 @@ line tools, plus the system's own image tools (which read `.NEF` RAW files).
 ## Use
 
 ```sh
-./photocull.sh /path/to/photos
+./photocull.sh
 ```
 
-It scans the folder (and subfolders), then opens a review page in your browser.
-Press `Ctrl+C` in the terminal to quit.
+This starts a local web page and opens it in your browser. Everything happens
+there: choose a folder, watch the scan, review the groups, move shots to the
+Trash. Press `Ctrl+C` in the terminal to quit.
 
-The first scan reads every file, so allow a few minutes for thousands of RAW
-files. Later runs reuse a cache and only read new or changed files.
+You can also pass a folder to skip the chooser: `./photocull.sh /path/to/photos`.
+
+The first scan of a folder reads every file, so allow a few minutes for
+thousands of RAW files. Later scans reuse a cache and only read new or changed
+files.
 
 ## What gets grouped
 
@@ -42,16 +46,17 @@ file, then more pixels, then the larger file, then names without "copy".
 Keys: `J`/`K` next/previous group, `1`–`9` toggle a shot, `B` keep best only,
 `A` keep all, `Space` full size, `X` toggle while full size, `Esc` close.
 
-## Options
+## Tuning what counts as similar
 
-```
---threshold N   how different shots taken together may look and still be grouped,
-                0-64 (default 10; lower is stricter)
---window N      seconds between shots to count as taken together (default 30)
---rescan        ignore the cache and re-read every file
---port N        port for the review page (default 8777)
---no-open       don't open the browser
-```
+The toolbar has two controls, applied instantly without rescanning:
+
+- **Strict / Loose**: how alike two shots must look to be grouped.
+- **Taken within**: how close in time shots must be to count as one burst.
+
+**Refresh** picks up files added to the folder since the scan.
+
+Command line options: `--port N` (default 8777) and `--no-open` (don't open the
+browser).
 
 ## Notes
 
