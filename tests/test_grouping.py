@@ -1,13 +1,20 @@
+import json
 import unittest
 
 from photocull.grouping import build_shots, group_shots
 from photocull.index import dhash_rows
 
 
-def row(path, dhash, taken=0.0, size=1000, qhash=None, w=6000, h=4000, kind="image", color=100):
+def row(path, dhash, taken=0.0, size=1000, qhash=None, w=6000, h=4000, kind="image", color=100,
+        quality=None):
     return {"path": path, "size": size, "mtime": taken, "taken": taken, "w": w, "h": h,
             "dhash": "%064x" % dhash, "qhash": qhash, "thumb": None, "kind": kind,
-            "color": "%02x" % color * 48}
+            "color": "%02x" % color * 48, "quality": json.dumps(quality) if quality else None}
+
+
+def quality(sharp=1000, roll=0.0, line=0.9, blown=0.0, mean=120, subject="salient"):
+    return {"v": 1, "sharp": sharp, "sharp_top": sharp, "subject": subject, "roll": roll,
+            "roll_length": line, "blown": blown, "crushed": 0.0, "mean": mean}
 
 
 A = int("0f" * 32, 16)
@@ -64,6 +71,33 @@ class GroupingTest(unittest.TestCase):
         # Shapes disagree completely (the subject moved) but colours sit in the same places.
         shots = build_shots([row("/a/1.JPG", A, taken=1, color=100), row("/a/2.JPG", B, taken=4, color=104)])
         self.assertEqual(names(group_shots(shots)), [("similar", ["1.JPG", "2.JPG"])])
+
+    def best(self, **shots):
+        rows = [row("/a/%s.JPG" % name, A, taken=i, size=1000 + i, quality=q)
+                for i, (name, q) in enumerate(sorted(shots.items()))]
+        (g,) = group_shots(build_shots(rows))
+        return g["shots"][0]["name"][0], {s["name"][0]: s["score"] for s in g["shots"]}
+
+    def test_sharper_shot_is_best(self):
+        best, scores = self.best(a=quality(sharp=300), b=quality(sharp=1200))
+        self.assertEqual(best, "b")
+        self.assertEqual(scores["b"]["focus"], 100)
+        self.assertEqual(scores["a"]["focus"], 50)
+
+    def test_level_shot_beats_slightly_sharper_tilted_one(self):
+        best, scores = self.best(a=quality(sharp=1000, roll=-4.0), b=quality(sharp=900, roll=0.3))
+        self.assertEqual(best, "b")
+        self.assertEqual(scores["a"]["tilt"], 4.0)
+
+    def test_steep_or_short_lines_are_not_treated_as_tilt(self):
+        _, scores = self.best(a=quality(roll=7.9), b=quality(roll=3.0, line=0.2))
+        self.assertIsNone(scores["a"]["tilt"])
+        self.assertIsNone(scores["b"]["tilt"])
+
+    def test_clearly_overexposed_shot_is_never_best(self):
+        best, scores = self.best(a=quality(sharp=5000, blown=0.4), b=quality(sharp=500))
+        self.assertEqual(best, "b")
+        self.assertEqual(scores["a"]["flag"], "over")
 
     def test_photo_and_video_never_group(self):
         shots = build_shots([row("/a/1.JPG", A, taken=1), row("/a/2.MOV", A, taken=2, kind="video")])

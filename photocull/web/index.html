@@ -90,7 +90,7 @@
   .ghead button { padding: 4px 10px; font-size: 13px; }
 
   .tiles { display: flex; flex-wrap: wrap; gap: 12px; }
-  .tile { width: 236px; border-radius: 10px; overflow: hidden; background: #101215; cursor: pointer;
+  .tile { width: 252px; border-radius: 10px; overflow: hidden; background: #101215; cursor: pointer;
           position: relative; box-shadow: 0 0 0 2px var(--line); transition: box-shadow .12s, transform .12s; }
   .tile:hover { transform: translateY(-1px); box-shadow: 0 0 0 2px var(--line2); }
   .tile .pic { height: 176px; display: flex; align-items: center; justify-content: center; background: #08090a; }
@@ -109,6 +109,14 @@
   .tile .zoom { position: absolute; top: 140px; right: 8px; padding: 2px 9px; font-size: 12px;
                 background: rgba(0,0,0,.72); border-color: rgba(255,255,255,.18); opacity: 0; }
   .tile:hover .zoom, .tile .zoom:focus-visible { opacity: 1; }
+  .score { display: flex; align-items: center; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+  .score .total { font-weight: 700; font-size: 13px; border-radius: 5px; padding: 0 7px; min-width: 30px; text-align: center; }
+  .score .good { background: #12392a; color: var(--keep); }
+  .score .fair { background: #3d3013; color: var(--accent); }
+  .score .poor { background: #40202a; color: #ff8b9a; }
+  .score .part { color: var(--dim); font-size: 11px; white-space: nowrap; }
+  .score .part.bad { color: #ff8b9a; font-weight: 600; }
+  .score .part.warn { color: var(--accent); }
   .tags { display: flex; gap: 4px; margin-top: 5px; flex-wrap: wrap; min-height: 17px; }
   .tag { font-size: 10px; font-weight: 700; border: 1px solid var(--line2); border-radius: 4px;
          padding: 0 5px; color: var(--dim); }
@@ -256,10 +264,10 @@ async function sync(keepMarks) {
     if (state.total) {
       bar.classList.remove("busy");
       bar.firstElementChild.style.width = (100 * state.done / state.total).toFixed(1) + "%";
-      $("scancount").textContent = fmtNum(state.done) + " of " + fmtNum(state.total) + " new files read";
+      $("scancount").textContent = (state.phase || "Reading new files") + ": " + fmtNum(state.done) + " of " + fmtNum(state.total);
     } else {
       bar.classList.add("busy"); bar.firstElementChild.style.width = "";
-      $("scancount").textContent = "Looking for photos and videos…";
+      $("scancount").textContent = state.phase ? state.phase + "…" : "Looking for photos and videos…";
     }
     pollTimer = setTimeout(sync, 400);
   } else if (state.status === "ready") {
@@ -410,6 +418,8 @@ function renderTile(g, s, i) {
   if (g === unique) cap.appendChild(el("div", "sub", fmtTime(s.taken)));
   const folder = el("div", "sub", s.folder === "." ? "top folder" : s.folder); folder.title = s.folder;
   cap.appendChild(folder);
+  const score = renderScore(s.score);
+  if (score) cap.appendChild(score);
   const tags = el("div", "tags");
   if (i === 0 && g !== unique) tags.appendChild(el("span", "tag best", "Best"));
   if (s.raw) tags.appendChild(el("span", "tag", s.files > 1 ? "RAW + JPG" : "RAW"));
@@ -419,6 +429,31 @@ function renderTile(g, s, i) {
   t.appendChild(cap);
   t.onclick = () => toggle(g, s.id);
   return t;
+}
+
+/* Quality line: overall score, then focus (vs the sharpest in the group), tilt and exposure. */
+function scoreParts(sc) {
+  const parts = [];
+  if (sc.focus != null) parts.push({ text: "Focus " + sc.focus, cls: sc.focus < 60 ? "warn" : "",
+    title: "Sharpness of the subject compared with the sharpest shot in this group (100 = sharpest)" });
+  parts.push(sc.tilt == null
+    ? { text: "Tilt n/a", cls: "", title: "No long level line (horizon, shoreline, railing) to measure tilt against" }
+    : { text: "Tilt " + sc.tilt.toFixed(1) + "°", cls: sc.tilt >= 3 ? "bad" : sc.tilt >= 1.5 ? "warn" : "",
+        title: "How far the main level line is from horizontal" });
+  parts.push(sc.flag === "over" ? { text: "Overexposed", cls: "bad", title: "A large part of the frame is blown out to white" }
+    : sc.flag === "under" ? { text: "Underexposed", cls: "bad", title: "The frame is very dark" }
+    : { text: "Exposure " + sc.exposure, cls: sc.exposure < 70 ? "warn" : "", title: "100 = no blown highlights or crushed shadows" });
+  return parts;
+}
+function renderScore(sc) {
+  if (!sc) return null;
+  const row = el("div", "score");
+  if (sc.overall != null) {
+    const total = el("span", "total " + (sc.overall >= 80 ? "good" : sc.overall >= 60 ? "fair" : "poor"), String(sc.overall));
+    total.title = "Overall score out of 100: focus 40%, level 35%, exposure 25%"; row.appendChild(total);
+  }
+  for (const p of scoreParts(sc)) { const e = el("span", "part " + p.cls, p.text); e.title = p.title; row.appendChild(e); }
+  return row;
 }
 
 const cardOf = g => document.querySelector('.group[data-gid="' + g.id + '"]');
@@ -479,7 +514,8 @@ function paintBox() {
   const s = box.group.shots[box.i], m = marks.get(s.id), info = $("boxinfo");
   info.textContent = "";
   info.append(el("b", null, (box.i + 1) + " of " + box.group.shots.length + "   " + s.name),
-              "   " + (s.w ? s.w + " × " + s.h + " · " : "") + fmtSize(s.size) + " · " + fmtTime(s.taken) + " · " + s.folder);
+              "   " + (s.w ? s.w + " × " + s.h + " · " : "") + fmtSize(s.size) + " · " + fmtTime(s.taken) +
+              (s.score ? "   ·   " + (s.score.overall != null ? "Score " + s.score.overall + " · " : "") + scoreParts(s.score).map(p => p.text).join(" · ") : ""));
   const st = $("boxstate"); st.textContent = m ? "TRASH" : "KEEP";
   st.style.background = m ? "var(--trash)" : "var(--keep)"; st.style.color = m ? "#fff" : "#05281a";
 }

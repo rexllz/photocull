@@ -4,7 +4,8 @@ Find duplicate and look-alike photos and videos from a Nikon camera, review them
 side by side, and move the ones you don't want to the Trash in one batch.
 
 Runs locally on macOS with nothing to install: Python 3 from the Xcode command
-line tools, plus the system's own image tools (which read `.NEF` RAW files).
+line tools, plus the system's own image tools (which read `.NEF` RAW files) and
+Vision framework.
 
 ## Use
 
@@ -32,8 +33,25 @@ files.
 A RAW file and its same-named JPEG in the same folder (`DSC_0001.NEF` +
 `DSC_0001.JPG`) count as one shot and are kept or trashed together.
 
-In each group the "Best" shot is listed first: it prefers shots that have a RAW
-file, then more pixels, then the larger file, then names without "copy".
+## Scores and the "Best" shot
+
+Every photo is measured once during the scan, and each shot in a group shows a
+score out of 100 with its three parts:
+
+| Check | Weight | How it is measured |
+|---|---|---|
+| **Focus** | 40% | Edge sharpness (Tenengrad) inside the subject: the faces if there are any, otherwise the region that draws the eye. Shown relative to the sharpest shot in the group. With faces, Apple's face capture quality (blur, eyes, expression) is blended in. |
+| **Level** | 35% | The tilt of the longest straight near-level edge (horizon, shoreline, railing), found with a Hough transform. "Tilt n/a" means no such line exists; the check is then left out of the score. |
+| **Exposure** | 25% | Share of the frame blown to white or crushed to black, plus overall brightness. |
+
+The best shot is listed first: a clearly over- or under-exposed shot is never
+best while another is available; then the highest score wins; ties fall back to
+having a RAW file, more pixels, larger file, and a name without "copy".
+
+The Unique tab shows tilt and exposure only, since focus is judged by comparison
+within a group. Scoring needs the Swift compiler from the Xcode command line
+tools (it builds a small helper on first use); without it the app still works
+and ranks by the fallback rules.
 
 ## Reviewing
 

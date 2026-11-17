@@ -52,6 +52,7 @@ class App:
         self.status = "idle"  # idle | scanning | ready | error
         self.root = self.error = self.db = self.cache = None
         self.done = self.total = 0
+        self.phase = ""
         self.rows, self.groups, self.shots, self.singles = [], [], {}, []
 
     # ---- scanning -------------------------------------------------------
@@ -65,12 +66,13 @@ class App:
                 return "A scan is already running."
             self.status, self.root, self.error = "scanning", str(root.resolve()), None
             self.done = self.total = 0
+            self.phase = ""
             self.rows, self.groups, self.shots, self.singles = [], [], {}, []
         threading.Thread(target=self._scan, args=(rescan,), daemon=True).start()
         return None
 
-    def _progress(self, done, total):
-        self.done, self.total = done, total
+    def _progress(self, done, total, phase=""):
+        self.done, self.total, self.phase = done, total, phase
 
     def _scan(self, rescan):
         try:
@@ -94,6 +96,7 @@ class App:
         self.singles = sorted((s for s in shots if s["id"] not in grouped), key=lambda s: s["taken"])
         for s in self.singles:
             s["identical"] = s["suggest_trash"] = False
+            s["score"] = grouping.assess_alone(s)
 
     def regroup(self, threshold, window):
         with self.lock:
@@ -105,7 +108,7 @@ class App:
     # ---- data for the page ----------------------------------------------
     def state(self):
         return {"status": self.status, "root": self.root, "error": self.error,
-                "done": self.done, "total": self.total, "files": len(self.rows),
+                "done": self.done, "total": self.total, "phase": self.phase, "files": len(self.rows),
                 "unreadable": sum(1 for r in self.rows if not r["dhash"]),
                 "threshold": self.threshold, "window": self.window,
                 "recent": recent_folders()}
@@ -116,7 +119,8 @@ class App:
                 "video": s["video"], "raw": s["has_raw"], "size": s["size"],
                 "w": s["rep"]["w"], "h": s["rep"]["h"], "taken": s["taken"],
                 "files": len(s["files"]), "identical": s["identical"],
-                "suggest": s["suggest_trash"], "thumb": bool(s["rep"]["thumb"])}
+                "suggest": s["suggest_trash"], "thumb": bool(s["rep"]["thumb"]),
+                "score": s.get("score")}
 
     def payload(self):
         """Groups to review, plus every shot that has no look-alike."""

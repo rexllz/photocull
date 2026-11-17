@@ -4,12 +4,15 @@ Everything here uses tools that ship with macOS (`sips`, `qlmanage`), so there
 is nothing to install and Nikon RAW (.NEF) files are decoded by the system.
 """
 import hashlib
+import json
 import os
+import queue
 import shutil
 import sqlite3
 import struct
 import subprocess
 import tempfile
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -34,10 +37,14 @@ CREATE TABLE IF NOT EXISTS files (
     qhash TEXT,
     thumb TEXT,
     kind  TEXT NOT NULL,
-    color TEXT
+    color TEXT,
+    quality TEXT
 )
 """
-COLUMNS = ("path", "size", "mtime", "taken", "w", "h", "dhash", "qhash", "thumb", "kind", "color")
+COLUMNS = ("path", "size", "mtime", "taken", "w", "h", "dhash", "qhash", "thumb", "kind", "color",
+           "quality")
+QUALITY_VERSION = 1            # bump when photoscore.swift changes what it measures
+SCORER_SOURCE = Path(__file__).parent / "photoscore.swift"
 HASH_SIDE = 16                 # 16x16 comparisons -> 256-bit shape fingerprint
 HASH_HEX = HASH_SIDE * HASH_SIDE // 4
 COLOR_GRID = 4                 # 4x4 grid of average colours
@@ -55,8 +62,10 @@ def cache_dir(root):
 def open_db(cache):
     db = sqlite3.connect(str(cache / "index.db"), check_same_thread=False)
     db.execute(SCHEMA)
-    if "color" not in [c[1] for c in db.execute("PRAGMA table_info(files)")]:
-        db.execute("ALTER TABLE files ADD COLUMN color TEXT")  # cache from an older version
+    have = [c[1] for c in db.execute("PRAGMA table_info(files)")]
+    for column in ("color", "quality"):  # cache made by an older version
+        if column not in have:
+            db.execute("ALTER TABLE files ADD COLUMN %s TEXT" % column)
     return db
 
 
@@ -212,7 +221,8 @@ def _process(path, kind, st, thumbs):
         ok, dhash, color = False, None, None
     return {"path": path, "size": st.st_size, "mtime": st.st_mtime,
             "taken": taken or st.st_mtime, "w": w, "h": h, "dhash": dhash,
-            "qhash": None, "thumb": thumb if ok else None, "kind": kind, "color": color}
+            "qhash": None, "thumb": thumb if ok else None, "kind": kind, "color": color,
+            "quality": None}
 
 
 def _refingerprint(row):
@@ -283,9 +293,84 @@ def scan(root, db, cache, progress=None, rescan=False):
             if done % 25 == 0:
                 db.commit()
             if progress:
-                progress(done, total)
+                progress(done, total, "Reading new files")
     db.commit()
+    score_quality(rows, db, progress)
     return rows
+
+
+def scorer_binary():
+    """Path to the compiled photoscore helper, building it on first use. None if it can't be built."""
+    tag = hashlib.sha1(SCORER_SOURCE.read_bytes()).hexdigest()[:10]
+    out = Path.home() / "Library" / "Caches" / "photocull" / "bin" / ("photoscore-" + tag)
+    if out.exists():
+        return str(out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        _run(["swiftc", "-O", "-o", str(out), str(SCORER_SOURCE)], timeout=600)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return str(out) if out.exists() else None
+
+
+def _has_quality(row):
+    try:
+        return bool(row["quality"]) and json.loads(row["quality"]).get("v") == QUALITY_VERSION
+    except ValueError:
+        return False
+
+
+def score_quality(rows, db, progress=None, workers=6):
+    """Measure sharpness, tilt and exposure for photos that have no score yet."""
+    todo = [r for r in rows if r["kind"] == "image" and "\n" not in r["path"] and not _has_quality(r)]
+    if not todo:
+        return
+    if progress:
+        progress(0, len(todo), "Preparing the photo scorer")
+    binary = scorer_binary()
+    if not binary:
+        return  # no Swift compiler: the app still works, just without quality scores
+    results = queue.Queue()
+
+    def work(batch):
+        proc = subprocess.Popen([binary], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL, universal_newlines=True)
+        try:
+            for row in batch:
+                measured = None
+                try:
+                    proc.stdin.write(row["path"] + "\n")
+                    proc.stdin.flush()
+                    measured = json.loads(proc.stdout.readline())
+                    measured.pop("path", None)
+                except (OSError, ValueError):
+                    pass
+                results.put((row, measured))
+                if proc.poll() is not None:
+                    break
+        finally:
+            proc.kill()
+            results.put(None)
+
+    workers = min(workers, len(todo))
+    for k in range(workers):
+        threading.Thread(target=work, args=(todo[k::workers],), daemon=True).start()
+    done = finished = 0
+    while finished < workers:
+        item = results.get()
+        if item is None:
+            finished += 1
+            continue
+        row, measured = item
+        done += 1
+        if measured and "error" not in measured:
+            row["quality"] = json.dumps(measured)
+            db.execute("UPDATE files SET quality=? WHERE path=?", (row["quality"], row["path"]))
+            if done % 50 == 0:
+                db.commit()
+        if progress:
+            progress(done, len(todo), "Checking sharpness, tilt and exposure")
+    db.commit()
 
 
 def fill_qhashes(rows, db):

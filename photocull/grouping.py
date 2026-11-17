@@ -1,5 +1,6 @@
 """Turn indexed files into shots, then group shots that are duplicates or look alike."""
 import hashlib
+import json
 import os
 import re
 
@@ -10,6 +11,11 @@ BANDS = 16         # 256-bit shape hash split into 16 x 16 bits
 MAX_BUCKET = 400   # skip huge buckets (e.g. hundreds of black frames)
 NEAR_BITS = 12     # any-time match: at most this many of 256 shape bits differ...
 NEAR_COLOR = 8     # ...and colours differ by at most this much on average (0-255)
+
+# How much each check counts toward a shot's overall score.
+W_FOCUS, W_LEVEL, W_EXPOSURE = 0.40, 0.35, 0.25
+MIN_LINE = 0.45    # a level reference must span this share of the frame width to be trusted
+MAX_TILT = 7.5     # steeper lines are perspective, not a tilted camera
 
 
 def hamming(a, b):
@@ -80,12 +86,89 @@ def _shot(files):
         "color": list(bytes.fromhex(rep["color"])) if rep.get("color") else None,
         "sig": (rep["size"], rep["qhash"]) if rep["qhash"] else None,
         "copy_name": bool(COPY_NAME.search(stem)),
+        "quality": _parse_quality(rep.get("quality")),
     }
 
 
+def _parse_quality(text):
+    try:
+        return json.loads(text) if text else None
+    except ValueError:
+        return None
+
+
+def tilt_of(q):
+    """Degrees off level, or None when the photo has no dependable level line."""
+    if q.get("roll_length", 0) >= MIN_LINE and abs(q.get("roll", 0)) < MAX_TILT:
+        return abs(q["roll"])
+    return None
+
+
+def level_score(tilt):
+    """100 when within half a degree of level, falling to 0 at 6 degrees."""
+    if tilt is None:
+        return None
+    return max(0.0, min(100.0, 100 * (1 - (tilt - 0.5) / 5.5)))
+
+
+def exposure_of(q):
+    """(score 0-100, flag). The flag is 'over'/'under' only for clearly bad exposure."""
+    blown, crushed, mean = q.get("blown", 0), q.get("crushed", 0), q.get("mean", 128)
+    score = (100 - 250 * max(0, blown - 0.05) - 150 * max(0, crushed - 0.30)
+             - 2.5 * max(0, 45 - mean) - 2.5 * max(0, mean - 215))
+    flag = "over" if blown > 0.25 or mean > 225 else "under" if mean < 25 or crushed > 0.6 else None
+    return max(0.0, score), flag
+
+
+def assess_alone(shot):
+    """Checks that make sense for one photo by itself: tilt and exposure."""
+    q = shot["quality"]
+    if not q:
+        return None
+    tilt = tilt_of(q)
+    exposure, flag = exposure_of(q)
+    level = level_score(tilt)
+    return {"overall": None, "focus": None, "tilt": None if tilt is None else round(tilt, 1),
+            "level": None if level is None else int(round(level)),
+            "exposure": int(round(exposure)), "flag": flag}
+
+
+def assess_group(members):
+    """Score each shot of a group. Focus is judged against the sharpest shot in the
+    group, because raw sharpness numbers only compare fairly within one scene."""
+    scored = [s for s in members if s["quality"]]
+    for s in members:
+        s["score"] = None
+    if not scored:
+        return
+    # Compare sharpness on the same kind of region in every shot.
+    subjects = {s["quality"].get("subject") for s in scored}
+    key = "sharp" if len(subjects) == 1 else "sharp_top"
+    best_sharp = max(s["quality"].get(key, 0) for s in scored) or 1
+    faces = [s["quality"].get("face_quality") for s in scored]
+    best_face = max(faces) if all(f is not None for f in faces) else None
+    for s in scored:
+        q = s["quality"]
+        focus = 100 * (q.get(key, 0) / best_sharp) ** 0.5
+        if best_face:
+            # Apple's face capture quality also sees blur, closed eyes and expression.
+            focus = 0.6 * focus + 0.4 * 100 * q["face_quality"] / best_face
+        base = assess_alone(s)
+        exposure, level = base["exposure"], base["level"]
+        parts = [(W_FOCUS, focus), (W_EXPOSURE, exposure)]
+        if level is not None:
+            parts.append((W_LEVEL, level))
+        overall = sum(w * v for w, v in parts) / sum(w for w, _ in parts)
+        base.update(overall=int(round(overall)), focus=int(round(focus)))
+        s["score"] = base
+
+
 def rank(shot):
-    """Sort key, best shot first: RAW kept, most pixels, biggest file, original name."""
-    return (not shot["has_raw"], -shot["pixels"], -shot["size"],
+    """Sort key, best shot first: not clearly mis-exposed, highest quality score,
+    then RAW kept, most pixels, biggest file, original name."""
+    score = shot.get("score")
+    return (bool(score and score["flag"]), -(score["overall"] if score else -1),
+            not shot["has_raw"], -shot["pixels"], -shot["size"],
             shot["copy_name"], len(shot["rep"]["path"]), shot["rep"]["path"])
 
 
@@ -166,6 +249,7 @@ def group_shots(shots, threshold=10, window=30):
     for members in components.values():
         if len(members) < 2:
             continue
+        assess_group(members)
         members.sort(key=rank)
         sigs = {s["sig"] for s in members}
         exact = len(sigs) == 1 and None not in sigs
