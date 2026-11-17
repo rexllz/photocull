@@ -44,6 +44,8 @@ python3 demo/make_demo.py      # draws 17 synthetic "photos" into ./demo-photos
 ./photocull.sh demo-photos
 ```
 
+The script only ever replaces a folder it created itself.
+
 The demo set contains bursts where one frame is good, one is tilted and one is
 out of focus, plus exact copies and a few one-off scenes. The screenshots in
 this README were taken from it.
@@ -201,12 +203,19 @@ tests/                      unit tests
   answer on your Wi-Fi address. The phone gets its own random key (in the QR
   code), which stops working the moment you switch phone access off. From the
   phone you can review and trash within the open folder only: choosing other
-  folders stays on the Mac. The connection is plain HTTP inside your network,
-  so use it on Wi-Fi you trust, not on public networks.
+  folders stays on the Mac.
+- **Phone access is not encrypted.** The connection is plain HTTP inside your
+  network. On Wi-Fi shared with people you don't know (public, office, some
+  apartment-building networks), someone capturing traffic could read the key
+  and then view or trash the photos in the open folder. Use phone access on
+  Wi-Fi you trust and switch it off afterwards.
 - **Session key.** The link printed at start-up contains a random key. Every
   request must carry it, so other users logged in to the same Mac cannot view
   your photos or trash anything. Treat the link like a password while the app
   is running; it stops working when you quit.
+- **Browser hardening.** Changes need both the session cookie and a token only
+  the page knows, requests addressed to any other host name are refused, and
+  responses forbid framing and loading anything from other sites.
 - **Trash, not delete.** Files go to the macOS Trash and can be restored until
   you empty it. On a camera card or external drive they go to that volume's
   own Trash and keep using its space until you empty the Trash with the volume
@@ -216,6 +225,11 @@ tests/                      unit tests
 - **Photos only.** Videos are not scanned or shown, and the Trash action
   refuses them. (`INCLUDE_VIDEOS` in `photocull/index.py` turns them on; that
   path is less tested.)
+
+### Reporting a security problem
+
+Please open an issue on the repository, without including private details of
+your own setup.
 
 ## Limitations
 

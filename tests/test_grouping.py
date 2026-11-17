@@ -166,6 +166,21 @@ class AccessTest(unittest.TestCase):
         self.assertEqual(self.request("GET", "/", {"Cookie": cookie}).status, 200)
         self.assertEqual(self.request("GET", "/api/state", {"Cookie": cookie}).status, 200)
 
+    def test_responses_forbid_framing_and_outside_resources(self):
+        for path in ("/", "/?k=" + self.app.token):
+            resp = self.request("GET", path)
+            self.assertEqual(resp.getheader("X-Frame-Options"), "DENY")
+            self.assertIn("default-src 'none'", resp.getheader("Content-Security-Policy"))
+
+    def test_malformed_requests_are_rejected(self):
+        cookie = "photocull_%d=%s" % (self.port, self.app.token)
+        headers = {"Cookie": cookie, "X-Token": self.app.token}
+        post = lambda path, body: self.request("POST", path, headers, body=body).status
+        self.assertEqual(post("/api/trash", '{"ids": "abc"}'), 400)
+        self.assertEqual(post("/api/trash", '[1, 2]'), 400)
+        self.assertEqual(post("/api/trash", "not json"), 400)
+        self.assertEqual(self.request("GET", "/", {"Cookie": "photocull_%d=\xff\xfe" % self.port}).status, 403)
+
     def test_changes_need_cookie_and_token_and_a_local_host(self):
         cookie = "photocull_%d=%s" % (self.port, self.app.token)
         post = lambda h: self.request("POST", "/api/settings", h, body="{}").status
@@ -247,6 +262,21 @@ class PhoneAccessTest(unittest.TestCase):
         self.app.phone_on()
         self.assertNotEqual(self.app.phone_token, old)
         self.assertEqual(self.phone("GET", "/api/state", old), 403)
+
+
+class DemoScriptTest(unittest.TestCase):
+    def test_refuses_to_replace_a_folder_it_did_not_make(self):
+        import os
+        import subprocess
+        import sys
+        import tempfile
+        script = os.path.join(os.path.dirname(__file__), "..", "demo", "make_demo.py")
+        with tempfile.TemporaryDirectory() as d:
+            keep = os.path.join(d, "keep.txt")
+            open(keep, "w").close()
+            proc = subprocess.run([sys.executable, script, d], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertTrue(os.path.exists(keep))
 
 
 if __name__ == "__main__":

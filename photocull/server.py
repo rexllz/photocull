@@ -17,6 +17,21 @@ from .trash import move_to_trash
 WEB = Path(__file__).parent / "web"
 RECENT = Path.home() / "Library" / "Caches" / "photocull" / "recent.json"
 PREVIEW_PX = 2400
+MAX_BODY = 1 << 20   # largest request body accepted (a list of shot ids is far smaller)
+# Sent with every response: no framing by other sites, no outside resources, no sniffing.
+SECURITY_HEADERS = (
+    ("X-Frame-Options", "DENY"),
+    ("X-Content-Type-Options", "nosniff"),
+    ("Referrer-Policy", "no-referrer"),
+    ("Content-Security-Policy",
+     "default-src 'none'; img-src 'self'; media-src 'self'; connect-src 'self'; "
+     "style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'"),
+)
+
+
+def same(a, b):
+    """Constant-time comparison that tolerates odd characters in a header."""
+    return secrets.compare_digest((a or "").encode("utf-8", "replace"), (b or "").encode("utf-8"))
 
 DENIED = b"""<!doctype html><meta charset="utf-8"><title>photocull</title>
 <body style="font:16px -apple-system,sans-serif;background:#0e1012;color:#eceef1;padding:60px;text-align:center">
@@ -245,8 +260,15 @@ class App:
 
 def make_handler(app):
     class Handler(BaseHTTPRequestHandler):
+        timeout = 60  # drop connections that go quiet, so idle sockets cannot pile up
+
         def log_message(self, *args):
             pass
+
+        def end_headers(self):
+            for name, value in SECURITY_HEADERS:
+                self.send_header(name, value)
+            super().end_headers()
 
         def _remote(self):
             """True for a request from another device (the phone), false for this Mac."""
@@ -274,9 +296,18 @@ def make_handler(app):
                 return False
             for part in (self.headers.get("Cookie") or "").split(";"):
                 name, _, value = part.strip().partition("=")
-                if name == self._cookie_name() and secrets.compare_digest(value, expected):
+                if name == self._cookie_name() and same(value, expected):
                     return True
             return False
+
+        def _state(self):
+            state = app.state()
+            state["remote"] = self._remote()
+            if self._remote():
+                state["recent"] = []   # the phone has no use for other folder paths on the Mac
+            else:
+                state["phone_url"] = app.phone_url()
+            return state
 
         def _send(self, body, ctype, status=200):
             self.send_response(status)
@@ -336,7 +367,7 @@ def make_handler(app):
             path = parsed.path
             key = parse_qs(parsed.query).get("k", [""])[0]
             expected = self._expected_key()
-            signing_in = bool(path == "/" and key and expected and secrets.compare_digest(key, expected))
+            signing_in = bool(path == "/" and key and expected and same(key, expected))
             if not signing_in and not self._authed():
                 hint = (b"On the Mac, click Phone and scan the QR code again." if self._remote()
                         else b"Open the link printed in the terminal where photocull is running.")
@@ -357,11 +388,7 @@ def make_handler(app):
                 self.end_headers()
                 return self.wfile.write(body)
             if path == "/api/state":
-                state = app.state()
-                state["remote"] = self._remote()
-                if not self._remote():
-                    state["phone_url"] = app.phone_url()
-                return self._json(state)
+                return self._json(self._state())
             if path == "/api/phone/qr.png" and not self._remote() and app.phone_qr:
                 return self._send(app.phone_qr, "image/png")
             if path == "/api/groups":
@@ -380,11 +407,16 @@ def make_handler(app):
 
         def do_POST(self):
             if not self._local() or not self._authed() or \
-                    not secrets.compare_digest(self.headers.get("X-Token") or "", self._expected_key()):
+                    not same(self.headers.get("X-Token"), self._expected_key()):
                 return self.send_error(403)
             try:
-                data = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+                length = int(self.headers.get("Content-Length") or 0)
+                if not 0 <= length <= MAX_BODY:
+                    return self.send_error(413)
+                data = json.loads(self.rfile.read(length) or b"{}")
             except ValueError:
+                return self.send_error(400)
+            if not isinstance(data, dict):
                 return self.send_error(400)
             if self._remote():
                 # The phone may review and trash within the folder already open. Choosing
@@ -404,9 +436,12 @@ def make_handler(app):
                     app.regroup(data.get("threshold", app.threshold), data.get("window", app.window))
                 except (TypeError, ValueError):
                     return self.send_error(400)
-                return self._json(app.state())
+                return self._json(self._state())
             if self.path == "/api/trash":
-                return self._json(app.trash(data.get("ids", [])))
+                ids = data.get("ids")
+                if not isinstance(ids, list):
+                    return self.send_error(400)
+                return self._json(app.trash([i for i in ids if isinstance(i, str)]))
             if self.path == "/api/reveal":
                 shot = app.shots.get(data.get("id"))
                 if shot:

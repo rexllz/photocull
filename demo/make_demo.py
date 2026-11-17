@@ -158,9 +158,14 @@ SINGLES = [forest, desert, lake]
 
 def main():
     out = sys.argv[1] if len(sys.argv) > 1 else "demo-photos"
+    marker = os.path.join(out, ".photocull-demo")
     if os.path.exists(out):
+        # Only ever replace a folder this script made: never delete someone's photos.
+        if not os.path.exists(marker):
+            sys.exit("%s already exists and was not made by this script. Choose another name." % out)
         shutil.rmtree(out)
     os.makedirs(os.path.join(out, "second-import"))
+    open(marker, "w").close()
     number = 0
     first = None
     for s, (scene, variants) in enumerate(BURSTS):
