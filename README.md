@@ -45,14 +45,15 @@ To skip the chooser, pass the folder: `./photocull.sh /path/to/photos`.
 ### Try it without your own photos
 
 ```sh
-python3 demo/make_demo.py      # draws 17 synthetic "photos" into ./demo-photos
+python3 demo/make_demo.py      # draws 17 synthetic photos and a short video into ./demo-photos
 ./photocull.sh demo-photos
 ```
 
 The script only ever replaces a folder it created itself.
 
 The demo set contains bursts where one frame is good, one is tilted and one is
-out of focus, plus exact copies and a few one-off scenes. The screenshots in
+out of focus, plus exact copies, a few one-off scenes and a 3-second clip (made
+only if the Swift compiler is installed). The screenshots in
 this README were taken from it.
 
 ### What to expect on the first run
@@ -91,6 +92,10 @@ Tabs:
 
 ![Unique tab](docs/unique.png)
 
+![Every photo tab, with find, day, order and size controls](docs/every.png)
+
+![Reviewing one by one in the full-size viewer](docs/viewer.png)
+
 Finding a photo among thousands (the row under the toolbar):
 
 - **Find**: type any part of a file or folder name, e.g. `0154` for
@@ -100,8 +105,9 @@ Finding a photo among thousands (the row under the toolbar):
   first, most tilted first, or worst exposure first. In the group tabs, groups
   are ordered by the shot that fits best (e.g. their most tilted shot), and
   "largest first" puts the biggest groups first.
-- **S / M / L**: picture size. **L** shows one large, sharper picture per row
-  on a phone.
+- **S / M / L**: picture size. The grid always fills the window, whether a
+  wide monitor, a laptop or a phone: S fits the most pictures per row, L the
+  fewest (one large, sharper picture per row on a phone).
 
 The tab counts always describe the whole folder; the number of matches shows
 next to the size buttons. The top bar slides away while you scroll down and
@@ -164,6 +170,8 @@ networks (guest, hotel, some shared building Wi-Fi) block devices from reaching
 each other; phone access cannot work there.
 
 ### Videos
+
+![Playing a video](docs/videos.png)
 
 Video playback uses the browser's own player. A Mac or iPhone plays camera
 HEVC (H.265) video; if a browser cannot play a file, use **Open in QuickTime**

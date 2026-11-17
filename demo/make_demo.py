@@ -9,7 +9,8 @@ part of the app has something to show.
     python3 demo/make_demo.py            # writes ./demo-photos
     ./photocull.sh demo-photos
 
-Needs only macOS (it uses the built-in `sips` to write JPEGs).
+Needs only macOS (it uses the built-in `sips` to write JPEGs). A short demo video is
+added too when the Swift compiler is available (Xcode command line tools).
 """
 import math
 import os
@@ -156,6 +157,29 @@ BURSTS = [
 SINGLES = [forest, desert, lake]
 
 
+def make_video(dest, taken):
+    """A 3-second clip of the sun setting, written with AVFoundation via a small Swift helper."""
+    if not shutil.which("swift"):
+        return False
+    with tempfile.TemporaryDirectory() as tmp:
+        frames = []
+        for i in range(12):
+            def scene(u, v, lift=i * 0.012):
+                return sunset(u, v - lift)
+            bmp = os.path.join(tmp, "f%02d.bmp" % i)
+            jpg = os.path.join(tmp, "f%02d.jpg" % i)
+            with open(bmp, "wb") as f:
+                f.write(render(scene, 0.0, 1.0, seed=i))
+            sips("-s", "format", "jpeg", bmp, "--out", jpg)
+            frames.append(jpg)
+        helper = os.path.join(os.path.dirname(os.path.abspath(__file__)), "make_video.swift")
+        ok = subprocess.run(["swift", helper, dest, "4"] + frames, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL).returncode == 0
+    if ok:
+        os.utime(dest, (taken, taken))
+    return ok
+
+
 def main():
     out = sys.argv[1] if len(sys.argv) > 1 else "demo-photos"
     marker = os.path.join(out, ".photocull-demo")
@@ -184,7 +208,11 @@ def main():
     for original in (first, dest):
         shutil.copy2(original, os.path.join(out, "second-import", os.path.basename(original)))
         print("second-import/%s  exact copy" % os.path.basename(original))
-    print("\nWrote %d files to %s. Now run:  ./photocull.sh %s" % (number + 2, out, out))
+    written = number + 2
+    if make_video(os.path.join(out, "DSC_0100.MOV"), START + 10800):
+        written += 1
+        print("DSC_0100.MOV  sunset    video")
+    print("\nWrote %d files to %s. Now run:  ./photocull.sh %s" % (written, out, out))
 
 
 if __name__ == "__main__":

@@ -66,7 +66,7 @@
   .notice .x { border: 0; padding: 0 4px; font-size: 15px; line-height: 1; }
   header { transition: transform .2s ease; position: sticky; top: 0; z-index: 5; background: rgba(14,16,18,.92); backdrop-filter: blur(10px);
            border-bottom: 1px solid var(--line); }
-  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 10px 20px; max-width: 1600px; margin: 0 auto; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 10px 20px; }
   .row + .row { border-top: 1px solid var(--line); padding-top: 8px; padding-bottom: 8px; }
   .brand { font-weight: 700; font-size: 16px; letter-spacing: -.01em; display: flex; align-items: center; gap: 8px; }
   .brand svg { width: 22px; height: 22px; }
@@ -82,7 +82,7 @@
   .ctl select { background: var(--raised); border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; }
   .grow { flex: 1; }
 
-  main { padding: 18px 20px 80px; max-width: 1600px; margin: 0 auto; }
+  main { padding: 18px 20px 80px; }
   .group { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
            margin-bottom: 14px; padding: 14px; }
   .group.focus { border-color: var(--focus); box-shadow: 0 0 0 1px var(--focus); }
@@ -101,17 +101,17 @@
   .gwarn { color: var(--accent); font-weight: 600; }
   .ghead button { padding: 4px 10px; font-size: 13px; }
 
-  .tiles { display: flex; flex-wrap: wrap; gap: 12px; }
-  body { --pic: 176px; }
-  body.size-s { --pic: 120px; }
-  body.size-s .tile { width: 172px; }
-  body.size-l { --pic: 330px; }
-  body.size-l .tile { width: 470px; }
-  .tile { width: 252px; border-radius: 10px; overflow: hidden; background: #101215; cursor: pointer;
+  /* Fluid grid: as many columns as fit, each stretched so rows fill the screen.
+     S / M / L only change the smallest column width. */
+  body { --col: 240px; }
+  body.size-s { --col: 160px; }
+  body.size-l { --col: 440px; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(var(--col), 100%), 1fr)); gap: 12px; }
+  .tile { min-width: 0; border-radius: 10px; overflow: hidden; background: #101215; cursor: pointer;
           position: relative; box-shadow: 0 0 0 2px var(--line); transition: box-shadow .12s, transform .12s; }
   .tile:hover { transform: translateY(-1px); box-shadow: 0 0 0 2px var(--line2); }
-  .tile .pic { height: var(--pic); display: flex; align-items: center; justify-content: center; background: #08090a; }
-  .tile img { max-width: 100%; max-height: var(--pic); display: block; transition: opacity .12s, filter .12s; }
+  .tile .pic { position: relative; aspect-ratio: 3 / 2; display: flex; align-items: center; justify-content: center; background: #08090a; }
+  .tile img { max-width: 100%; max-height: 100%; display: block; transition: opacity .12s, filter .12s; }
   .tile .nothumb { color: var(--faint); font-size: 12px; }
   .tile .cap { padding: 8px 10px 10px; font-size: 12px; }
   .tile .name { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -123,7 +123,7 @@
   .tile.marked .state { background: var(--trash); color: #fff; }
   .tile .num { position: absolute; top: 8px; right: 8px; background: rgba(0,0,0,.6); border-radius: 5px;
                padding: 1px 7px; font-size: 11px; color: var(--dim); }
-  .tile .zoom { position: absolute; top: calc(var(--pic) - 36px); right: 8px; padding: 2px 9px; font-size: 12px;
+  .tile .zoom { position: absolute; bottom: 8px; right: 8px; padding: 2px 9px; font-size: 12px;
                 background: rgba(0,0,0,.72); border-color: rgba(255,255,255,.18); opacity: 0; }
   .tile:hover .zoom, .tile .zoom:focus-visible { opacity: 1; }
   .score { display: flex; align-items: center; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
@@ -174,7 +174,7 @@
   .notice[hidden], body:not(.remote) #netnote { display: none; }
 
   /* Choosing shots to download to the phone. */
-  .tile .pick { position: absolute; top: calc(var(--pic) - 36px); left: 8px; padding: 2px 9px; font-size: 12px;
+  .tile .pick { position: absolute; bottom: 8px; left: 8px; padding: 2px 9px; font-size: 12px;
                 background: rgba(0,0,0,.72); border-color: rgba(255,255,255,.18); }
   .tile.picked .pick { background: var(--focus); border-color: var(--focus); color: #06182c; font-weight: 600; }
   .tile.picked { outline: 2px solid var(--focus); outline-offset: 2px; }
@@ -200,18 +200,14 @@
     .grow { display: none; }
     main { padding: 12px 12px 70px; }
     .group { padding: 10px; }
-    .tiles { gap: 8px; }
-    body { --pic: 118px; }
-    .tile { width: calc(50% - 4px); }
-    body.size-s { --pic: 84px; }
-    body.size-s .tile { width: calc(33.33% - 6px); }
+    .tiles { gap: 8px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    body.size-s .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    body.size-l .tiles { grid-template-columns: minmax(0, 1fr); }
     body.size-s .tile .cap .sub, body.size-s .tile .score, body.size-s .tile .tags,
     body.size-s .tile .num { display: none; }
     body.size-s .tile .cap { padding: 5px 6px; }
     body.size-s .tile .name { font-size: 11px; }
-    body.size-s .tile .zoom, body.size-s .tile .pick { font-size: 11px; padding: 1px 6px; top: calc(var(--pic) - 28px); }
-    body.size-l { --pic: 64vw; }
-    body.size-l .tile { width: 100%; }
+    body.size-s .tile .zoom, body.size-s .tile .pick { font-size: 11px; padding: 1px 6px; bottom: 5px; }
     .findrow input[type=search] { flex: 1 1 100%; }
     .notice { padding: 6px 12px; font-size: 12px; }
     .keys { display: none; }
@@ -647,10 +643,10 @@ function renderTile(g, s, i) {
   if (!isFlat(g)) t.appendChild(el("span", "num", String(i + 1)));
   const pick = el("button", "pick");
   pick.onclick = e => { e.stopPropagation(); picks.has(s.id) ? picks.delete(s.id) : picks.add(s.id); paintTile(t, s); updateStats(); };
-  t.appendChild(pick);
+  pic.appendChild(pick);
   const zoom = el("button", "zoom", s.video ? "Play" : "View");
   zoom.onclick = e => { e.stopPropagation(); openBox(g, i); };
-  t.appendChild(zoom);
+  pic.appendChild(zoom);
   const cap = el("div", "cap");
   const name = el("div", "name", s.name); name.title = s.folder + "/" + s.name;
   cap.appendChild(name);
