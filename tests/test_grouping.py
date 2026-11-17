@@ -174,5 +174,79 @@ class AccessTest(unittest.TestCase):
         self.assertEqual(post({"Cookie": cookie, "X-Token": self.app.token, "Host": "evil.example"}), 403)
 
 
+class PhoneAccessTest(unittest.TestCase):
+    """Phone access, exercised by calling this Mac's own network address."""
+
+    def setUp(self):
+        import threading
+        from unittest import mock
+        from photocull import server
+        self.server = server
+        self.LAN = server.lan_address()
+        if not self.LAN:
+            self.skipTest("no network connection")
+        self.app = server.App()
+        self.app.root = "/photos"
+        self.httpd = server.serve(self.app, 0)
+        self.port = self.app.port
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        self.patches = [mock.patch.object(server, "qr_png", return_value=b"png")]
+        for p in self.patches:
+            p.start()
+
+    def tearDown(self):
+        self.app.phone_off()
+        for p in self.patches:
+            p.stop()
+        self.httpd.shutdown()
+        self.httpd.server_close()
+
+    def request(self, host, method, path, key=None, body=None):
+        import http.client
+        conn = http.client.HTTPConnection(host, self.port, timeout=5)
+        headers = {}
+        if key:
+            headers = {"Cookie": "photocull_%d=%s" % (self.port, key), "X-Token": key}
+        conn.request(method, path, body=body, headers=headers)
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+        return resp.status
+
+    def phone(self, method, path, key=None, body=None):
+        return self.request(self.LAN, method, path, key, body)
+
+    def test_network_is_closed_until_switched_on(self):
+        with self.assertRaises(OSError):
+            self.phone("GET", "/")
+
+    def test_phone_gets_in_only_with_the_phone_key(self):
+        self.assertIsNone(self.app.phone_on())
+        self.assertEqual(self.phone("GET", "/api/state"), 403)
+        self.assertEqual(self.phone("GET", "/api/state", self.app.token), 403)       # Mac key is Mac-only
+        self.assertEqual(self.phone("GET", "/api/state", self.app.phone_token), 200)
+        self.assertEqual(self.request("127.0.0.1", "GET", "/api/state", self.app.phone_token), 403)
+
+    def test_phone_cannot_choose_folders_or_change_phone_access(self):
+        self.app.phone_on()
+        key = self.app.phone_token
+        self.assertEqual(self.phone("POST", "/api/open", key, '{"path": "/etc"}'), 403)
+        self.assertEqual(self.phone("POST", "/api/pick", key, "{}"), 403)
+        self.assertEqual(self.phone("POST", "/api/reveal", key, "{}"), 403)
+        self.assertEqual(self.phone("POST", "/api/phone", key, '{"on": false}'), 403)
+        self.assertEqual(self.phone("GET", "/api/phone/qr.png", key), 404)
+        self.assertEqual(self.phone("POST", "/api/settings", key, "{}"), 200)
+
+    def test_switching_off_revokes_the_key_and_closes_the_port(self):
+        self.app.phone_on()
+        old = self.app.phone_token
+        self.app.phone_off()
+        with self.assertRaises(OSError):
+            self.phone("GET", "/api/state", old)
+        self.app.phone_on()
+        self.assertNotEqual(self.app.phone_token, old)
+        self.assertEqual(self.phone("GET", "/api/state", old), 403)
+
+
 if __name__ == "__main__":
     unittest.main()

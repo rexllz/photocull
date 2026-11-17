@@ -6,7 +6,8 @@ tilt and exposure, and lets you move the ones you don't want to the Trash in one
 batch.
 
 It runs entirely on your Mac: a small local web page, no account, no upload,
-nothing to install.
+nothing to install. You can also review from your phone over Wi-Fi by scanning
+a QR code.
 
 ![Review page: groups of similar shots with scores](docs/review.png)
 
@@ -85,6 +86,25 @@ Controls:
 Keys: `J`/`K` next/previous group, `1`–`9` toggle a shot, `B` keep best only,
 `A` keep all, `Space` full size, `X` toggle while full size, `Esc` close.
 
+## Review from your phone
+
+<img src="docs/phone.png" alt="Review page on a phone" width="300">
+
+You can review on a phone while the photos stay on the Mac:
+
+1. On the Mac's review page, click **Phone** and confirm. macOS may ask to
+   allow incoming connections; choose Allow.
+2. Scan the QR code with the phone's camera. The same review page opens in the
+   phone's browser, laid out for a small screen.
+3. Tap a shot to mark it, tap **View** to see it full size (swipe to flip
+   between shots, pinch to zoom), and use **Move to Trash** as on the Mac. Files
+   are moved to the Trash on the Mac; nothing on the phone is touched.
+4. Click **Phone: on** → **Turn off phone access** when you're done.
+
+Both devices must be on the same Wi-Fi, and the Mac must stay awake. Some
+networks (guest, hotel, some shared building Wi-Fi) block devices from reaching
+each other; phone access cannot work there.
+
 ## Scores and the "Best" shot
 
 Every shot in a group gets a score out of 100, with its three parts shown:
@@ -108,9 +128,9 @@ shoreline. Compare by eye before trashing similar shots.
 ```mermaid
 flowchart LR
     subgraph Browser
-        P[Review page<br>choose folder · mark · trash]
+        P[Review page on the Mac<br>or a phone via QR code]
     end
-    subgraph "Local server (127.0.0.1 only)"
+    subgraph "Local server (127.0.0.1; Wi-Fi only if you switch phone access on)"
         S[HTTP server<br>session key required]
     end
     subgraph "Logic"
@@ -172,10 +192,17 @@ tests/                      unit tests
 
 ## Privacy and safety
 
-- **Nothing leaves your Mac.** There are no network calls, analytics or
-  third-party services, and the page loads no external scripts or fonts.
-- **Local only.** The server listens on `127.0.0.1`, so other devices on your
-  network cannot reach it.
+- **Nothing leaves your network.** There are no calls to the internet,
+  analytics or third-party services, and the page loads no external scripts or
+  fonts.
+- **Local only by default.** The server listens on `127.0.0.1`, so other
+  devices on your network cannot reach it.
+- **Phone access is opt-in.** Only while you switch it on does the app also
+  answer on your Wi-Fi address. The phone gets its own random key (in the QR
+  code), which stops working the moment you switch phone access off. From the
+  phone you can review and trash within the open folder only: choosing other
+  folders stays on the Mac. The connection is plain HTTP inside your network,
+  so use it on Wi-Fi you trust, not on public networks.
 - **Session key.** The link printed at start-up contains a random key. Every
   request must carry it, so other users logged in to the same Mac cannot view
   your photos or trash anything. Treat the link like a password while the app

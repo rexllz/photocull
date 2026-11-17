@@ -136,6 +136,48 @@
   #boxstate { font-weight: 700; border: 0; min-width: 92px; }
   #boxstage { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 0; padding: 0 20px 20px; }
   #boxstage img, #boxstage video { max-width: 100%; max-height: 100%; border-radius: 4px; }
+  #boxprev, #boxnext { font-size: 18px; line-height: 1; padding: 5px 13px; }
+
+  #phonebox { position: fixed; inset: 0; background: rgba(0,0,0,.8); z-index: 25; display: none;
+              align-items: center; justify-content: center; padding: 20px; }
+  #phonebox.open { display: flex; }
+  .sheet { background: var(--panel); border: 1px solid var(--line2); border-radius: 14px; padding: 24px;
+           width: min(420px, 100%); text-align: center; }
+  .sheet h2 { margin: 0 0 6px; font-size: 19px; }
+  .sheet p { color: var(--dim); margin: 8px 0; font-size: 13px; }
+  #phoneqr { width: 250px; height: 250px; image-rendering: pixelated; background: #fff; padding: 12px;
+             border-radius: 10px; margin: 12px 0 6px; }
+  .sheet .btns { display: flex; gap: 8px; justify-content: center; margin-top: 16px; }
+  #phone.on { color: var(--keep); border-color: var(--keep); }
+
+  /* Signed in from a phone: folder choice, Finder and the phone switch stay on the Mac. */
+  body.remote #phone, body.remote #boxreveal, body.remote #pick, body.remote .or,
+  body.remote #pathform, body.remote #recent { display: none; }
+  body.remote #folder { pointer-events: none; }
+  body:not(.remote) #remotehint { display: none; }
+
+  @media (hover: none) { .tile .zoom { opacity: 1; } }
+  @media (max-width: 700px) {
+    .row { padding: 8px 12px; gap: 8px; }
+    .brand { font-size: 15px; }
+    #folder { max-width: 130px; }
+    #stats { flex-basis: 100%; text-align: left; order: 5; font-size: 13px; }
+    #trash { margin-left: auto; }
+    .seg button { padding: 4px 9px; }
+    .ctl input[type=range] { width: 84px; }
+    .grow { display: none; }
+    main { padding: 12px 12px 70px; }
+    .group { padding: 10px; }
+    .tiles { gap: 8px; }
+    .tile { width: calc(50% - 4px); }
+    .tile .pic { height: 118px; }
+    .tile img { max-height: 118px; }
+    .tile .zoom { top: 86px; }
+    .keys { display: none; }
+    #boxbar { flex-wrap: wrap; padding: 10px 12px; gap: 8px; }
+    #boxinfo { flex-basis: 100%; white-space: normal; font-size: 12px; }
+    #boxstage { padding: 0 6px 10px; }
+  }
   #toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: var(--raised);
            border: 1px solid var(--line2); border-radius: 10px; padding: 11px 18px; display: none; z-index: 30;
            box-shadow: 0 8px 30px rgba(0,0,0,.5); }
@@ -158,6 +200,7 @@
     <input id="path" placeholder="/Volumes/NIKON/DCIM" spellcheck="false" autocomplete="off">
     <button>Open</button>
   </form>
+  <p class="small" id="remotehint">Choose a folder on the Mac first, then reload this page.</p>
   <div class="error" id="werror"></div>
   <div id="recent" hidden><h2>Recent folders</h2><div id="recentlist"></div></div>
   <button id="back" class="ghost" hidden>Back to review</button>
@@ -198,6 +241,7 @@
           <option value="120">2 minutes</option><option value="600">10 minutes</option>
         </select></label>
       <button id="refresh" class="ghost" title="Check the folder for new files">Refresh</button>
+      <button id="phone" class="ghost" title="Review from a phone on the same Wi-Fi">Phone</button>
       <div class="grow"></div>
       <button id="bestall" title="In every group shown, mark everything except the best shot">Keep best only in shown groups</button>
       <button id="clear">Unmark all</button>
@@ -216,11 +260,26 @@
 <div id="box">
   <div id="boxbar">
     <div id="boxinfo"></div>
+    <button id="boxprev" title="Previous (←)">‹</button>
+    <button id="boxnext" title="Next (→)">›</button>
     <button id="boxstate" title="Click to switch (X)"></button>
     <button id="boxreveal">Show in Finder</button>
     <button id="boxclose">Close</button>
   </div>
   <div id="boxstage"></div>
+</div>
+<div id="phonebox">
+  <div class="sheet">
+    <h2>Review from your phone</h2>
+    <p>Scan with the phone's camera. Both devices must be on the same Wi-Fi.</p>
+    <img id="phoneqr" alt="QR code for the phone link">
+    <p>Anyone with this code can view and trash the photos in this folder while phone access is on.
+       Use it on a network you trust, and turn it off when you're done.</p>
+    <div class="btns">
+      <button id="phoneoff" class="danger">Turn off phone access</button>
+      <button id="phoneclose">Close</button>
+    </div>
+  </div>
 </div>
 <div id="toast"></div>
 
@@ -256,6 +315,8 @@ function toast(msg) {
 /* ---------- app flow: welcome -> scanning -> review ---------- */
 async function sync(keepMarks) {
   state = await getState();
+  document.body.classList.toggle("remote", !!state.remote);
+  paintPhone();
   clearTimeout(pollTimer);
   if (state.status === "scanning") {
     setView("scanning");
@@ -523,6 +584,38 @@ function paintBox() {
 }
 function stepBox(d) { const n = box.group.shots.length; box.i = (box.i + d + n) % n; showBox(); }
 $("boxclose").onclick = closeBox;
+$("boxprev").onclick = () => stepBox(-1);
+$("boxnext").onclick = () => stepBox(1);
+let swipeX = null;   // swipe left/right on a touch screen to flip between shots
+$("boxstage").addEventListener("touchstart", e => { swipeX = e.touches.length === 1 ? e.touches[0].clientX : null; }, { passive: true });
+$("boxstage").addEventListener("touchend", e => {
+  if (swipeX === null || !box) return;
+  const dx = e.changedTouches[0].clientX - swipeX; swipeX = null;
+  if (Math.abs(dx) > 60) stepBox(dx < 0 ? 1 : -1);
+}, { passive: true });
+
+/* ---------- phone access ---------- */
+function paintPhone() {
+  const b = $("phone"); b.classList.toggle("on", !!state.phone); b.textContent = state.phone ? "Phone: on" : "Phone";
+}
+function openPhoneBox() { $("phoneqr").src = "/api/phone/qr.png?" + Date.now(); $("phonebox").classList.add("open"); }
+$("phone").onclick = async () => {
+  if (state.phone) return openPhoneBox();
+  if (!confirm("Turn on phone access?\n\nThis Mac will answer on your Wi-Fi so a phone can open this review page. " +
+               "Only someone with the QR code can get in, and only this folder is reachable. " +
+               "macOS may ask to allow incoming connections: choose Allow.")) return;
+  try {
+    const r = await post("/api/phone", { on: true });
+    if (r.error) return toast(r.error);
+    state.phone = true; paintPhone(); openPhoneBox();
+  } catch (e) { toast(e.message); }
+};
+$("phoneclose").onclick = () => $("phonebox").classList.remove("open");
+$("phoneoff").onclick = async () => {
+  try { await post("/api/phone", { on: false }); state.phone = false; paintPhone(); toast("Phone access is off. The old QR code no longer works."); }
+  catch (e) { toast(e.message); }
+  $("phonebox").classList.remove("open");
+};
 $("boxreveal").onclick = () => post("/api/reveal", { id: box.group.shots[box.i].id });
 $("boxstate").onclick = () => toggle(box.group, box.group.shots[box.i].id);
 

@@ -3,7 +3,9 @@ import json
 import mimetypes
 import os
 import secrets
+import socket
 import subprocess
+import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -37,6 +39,48 @@ def pick_folder():
     return path if proc.returncode == 0 and path else None
 
 
+_QR = """
+ObjC.import("AppKit"); ObjC.import("CoreImage");
+function run(argv) {
+  var data = $.NSString.alloc.initWithUTF8String(argv[0]).dataUsingEncoding($.NSUTF8StringEncoding);
+  var f = $.CIFilter.filterWithName("CIQRCodeGenerator");
+  f.setValueForKey(data, "inputMessage"); f.setValueForKey("M", "inputCorrectionLevel");
+  var rep = $.NSBitmapImageRep.alloc.initWithCIImage(f.outputImage);
+  var png = rep.representationUsingTypeProperties($.NSBitmapImageFileTypePNG, $.NSDictionary.dictionary);
+  return png.writeToFileAtomically(argv[1], true) ? "ok" : "fail";
+}
+"""
+
+
+def qr_png(text):
+    """PNG bytes of a QR code (one pixel per module), made by macOS's own generator."""
+    fd, path = tempfile.mkstemp(suffix=".png", prefix="photocull-qr-")
+    os.close(fd)
+    try:
+        subprocess.run(["osascript", "-l", "JavaScript", "-e", _QR, text, path],
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        with open(path, "rb") as f:
+            return f.read()
+    finally:
+        os.unlink(path)
+
+
+def lan_address():
+    """This Mac's address on the local network, or None when it has none."""
+    for interface in ("en0", "en1"):  # Wi-Fi first, then wired
+        out = subprocess.run(["ipconfig", "getifaddr", interface], stdout=subprocess.PIPE).stdout
+        if out.strip():
+            return out.decode().strip()
+    try:  # whichever interface the default route uses; connecting a UDP socket sends nothing
+        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        probe.connect(("192.0.2.1", 9))
+        address = probe.getsockname()[0]
+        probe.close()
+        return None if address.startswith("127.") else address
+    except OSError:
+        return None
+
+
 def recent_folders():
     try:
         return [p for p in json.loads(RECENT.read_text()) if os.path.isdir(p)]
@@ -60,6 +104,43 @@ class App:
         self.done = self.total = 0
         self.phase = ""
         self.rows, self.groups, self.shots, self.singles = [], [], {}, []
+        # Phone access: off until switched on from the Mac. It gets its own key and
+        # its own listener on the network address, both discarded when switched off.
+        self.handler = self.port = None
+        self.phone_token = self.phone_server = self.phone_ip = self.phone_qr = None
+
+    # ---- phone access ---------------------------------------------------
+    def phone_url(self):
+        if not self.phone_token:
+            return None
+        return "http://%s:%d/?k=%s" % (self.phone_ip, self.port, self.phone_token)
+
+    def phone_on(self):
+        """Start answering on the local network. Returns an error message or None."""
+        with self.lock:
+            if self.phone_token:
+                return None
+            ip = lan_address()
+            if not ip:
+                return "This Mac is not connected to a network."
+            try:
+                server = ThreadingHTTPServer((ip, self.port), self.handler)
+            except OSError as exc:
+                return "Could not open the network port: %s" % exc
+            server.daemon_threads = True
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            self.phone_server, self.phone_ip = server, ip
+            self.phone_token = secrets.token_urlsafe(24)
+            self.phone_qr = qr_png(self.phone_url())
+            return None
+
+    def phone_off(self):
+        with self.lock:
+            server, self.phone_server = self.phone_server, None
+            self.phone_token = self.phone_ip = self.phone_qr = None
+        if server:
+            server.shutdown()
+            server.server_close()
 
     # ---- scanning -------------------------------------------------------
     def open(self, folder, rescan=False):
@@ -117,7 +198,8 @@ class App:
                 "done": self.done, "total": self.total, "phase": self.phase, "files": len(self.rows),
                 "unreadable": sum(1 for r in self.rows if not r["dhash"]),
                 "threshold": self.threshold, "window": self.window,
-                "videos": index.INCLUDE_VIDEOS, "recent": recent_folders()}
+                "videos": index.INCLUDE_VIDEOS, "phone": bool(self.phone_token),
+                "recent": recent_folders()}
 
     def _shot_json(self, s):
         return {"id": s["id"], "name": s["name"],
@@ -166,19 +248,33 @@ def make_handler(app):
         def log_message(self, *args):
             pass
 
+        def _remote(self):
+            """True for a request from another device (the phone), false for this Mac."""
+            return self.client_address[0] not in ("127.0.0.1", "::1")
+
+        def _expected_key(self):
+            # The Mac's key only works from the Mac; the phone key only from the network.
+            return app.phone_token if self._remote() else app.token
+
         def _local(self):
+            """Reject requests addressed to any other host name (DNS rebinding)."""
             host = (self.headers.get("Host") or "").split(":")[0]
+            if self._remote():
+                return bool(app.phone_ip) and host == app.phone_ip
             return host in ("127.0.0.1", "localhost")
 
         def _cookie_name(self):
             return "photocull_%d" % self.server.server_address[1]
 
         def _authed(self):
-            """Every request must carry the session key, so other users of this Mac
-            (who can also reach 127.0.0.1) cannot see or trash anything."""
+            """Every request must carry the session key, so neither other users of this
+            Mac nor other devices on the network can see or trash anything."""
+            expected = self._expected_key()
+            if not expected:
+                return False
             for part in (self.headers.get("Cookie") or "").split(";"):
                 name, _, value = part.strip().partition("=")
-                if name == self._cookie_name() and secrets.compare_digest(value, app.token):
+                if name == self._cookie_name() and secrets.compare_digest(value, expected):
                     return True
             return False
 
@@ -239,21 +335,28 @@ def make_handler(app):
             parsed = urlsplit(self.path)
             path = parsed.path
             key = parse_qs(parsed.query).get("k", [""])[0]
-            if path == "/" and key and secrets.compare_digest(key, app.token):
+            expected = self._expected_key()
+            if path == "/" and key and expected and secrets.compare_digest(key, expected):
                 # Swap the key in the link for a cookie, so it leaves the address bar.
                 self.send_response(303)
                 self.send_header("Location", "/")
                 self.send_header("Set-Cookie", "%s=%s; HttpOnly; SameSite=Strict; Path=/"
-                                 % (self._cookie_name(), app.token))
+                                 % (self._cookie_name(), expected))
                 self.send_header("Content-Length", "0")
                 return self.end_headers()
             if not self._authed():
                 return self._send(DENIED, "text/html; charset=utf-8", 403)
             if path == "/":
-                html = (WEB / "index.html").read_text().replace("__TOKEN__", app.token)
+                html = (WEB / "index.html").read_text().replace("__TOKEN__", expected)
                 return self._send(html.encode(), "text/html; charset=utf-8")
             if path == "/api/state":
-                return self._json(app.state())
+                state = app.state()
+                state["remote"] = self._remote()
+                if not self._remote():
+                    state["phone_url"] = app.phone_url()
+                return self._json(state)
+            if path == "/api/phone/qr.png" and not self._remote() and app.phone_qr:
+                return self._send(app.phone_qr, "image/png")
             if path == "/api/groups":
                 return self._json(app.payload())
             kind, _, shot_id = path.strip("/").partition("/")
@@ -270,12 +373,21 @@ def make_handler(app):
 
         def do_POST(self):
             if not self._local() or not self._authed() or \
-                    not secrets.compare_digest(self.headers.get("X-Token") or "", app.token):
+                    not secrets.compare_digest(self.headers.get("X-Token") or "", self._expected_key()):
                 return self.send_error(403)
             try:
                 data = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
             except ValueError:
                 return self.send_error(400)
+            if self._remote():
+                # The phone may review and trash within the folder already open. Choosing
+                # folders, Finder and the phone switch itself stay on the Mac.
+                reopen = self.path == "/api/open" and data.get("path") == app.root
+                if self.path not in ("/api/settings", "/api/trash") and not reopen:
+                    return self.send_error(403)
+            if self.path == "/api/phone":
+                error = app.phone_on() if data.get("on") else app.phone_off()
+                return self._json({"error": error, "on": bool(app.phone_token), "url": app.phone_url()})
             if self.path == "/api/pick":
                 return self._json({"path": pick_folder()})
             if self.path == "/api/open":
@@ -299,6 +411,8 @@ def make_handler(app):
 
 
 def serve(app, port):
-    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(app))
+    app.handler = make_handler(app)
+    server = ThreadingHTTPServer(("127.0.0.1", port), app.handler)
     server.daemon_threads = True
+    app.port = server.server_address[1]
     return server
