@@ -56,7 +56,15 @@
   .mono { font: 12px ui-monospace, Menlo, monospace; color: var(--dim); word-break: break-all; }
 
   /* ---------- review ---------- */
-  header { position: sticky; top: 0; z-index: 5; background: rgba(14,16,18,.92); backdrop-filter: blur(10px);
+  /* The bar slides away while scrolling down and comes back on any scroll up. */
+  header.tuck { transform: translateY(-100%); }
+  .findrow input[type=search] { background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+                                padding: 5px 10px; min-width: 200px; flex: 0 1 280px; }
+  .findrow select { background: var(--raised); border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; max-width: 220px; }
+  .findrow .seg button { padding: 3px 10px; }
+  #matchinfo { color: var(--dim); font-size: 13px; }
+  .notice .x { border: 0; padding: 0 4px; font-size: 15px; line-height: 1; }
+  header { transition: transform .2s ease; position: sticky; top: 0; z-index: 5; background: rgba(14,16,18,.92); backdrop-filter: blur(10px);
            border-bottom: 1px solid var(--line); }
   .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 10px 20px; max-width: 1600px; margin: 0 auto; }
   .row + .row { border-top: 1px solid var(--line); padding-top: 8px; padding-bottom: 8px; }
@@ -93,11 +101,16 @@
   .ghead button { padding: 4px 10px; font-size: 13px; }
 
   .tiles { display: flex; flex-wrap: wrap; gap: 12px; }
+  body { --pic: 176px; }
+  body.size-s { --pic: 120px; }
+  body.size-s .tile { width: 172px; }
+  body.size-l { --pic: 330px; }
+  body.size-l .tile { width: 470px; }
   .tile { width: 252px; border-radius: 10px; overflow: hidden; background: #101215; cursor: pointer;
           position: relative; box-shadow: 0 0 0 2px var(--line); transition: box-shadow .12s, transform .12s; }
   .tile:hover { transform: translateY(-1px); box-shadow: 0 0 0 2px var(--line2); }
-  .tile .pic { height: 176px; display: flex; align-items: center; justify-content: center; background: #08090a; }
-  .tile img { max-width: 100%; max-height: 176px; display: block; transition: opacity .12s, filter .12s; }
+  .tile .pic { height: var(--pic); display: flex; align-items: center; justify-content: center; background: #08090a; }
+  .tile img { max-width: 100%; max-height: var(--pic); display: block; transition: opacity .12s, filter .12s; }
   .tile .nothumb { color: var(--faint); font-size: 12px; }
   .tile .cap { padding: 8px 10px 10px; font-size: 12px; }
   .tile .name { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -109,7 +122,7 @@
   .tile.marked .state { background: var(--trash); color: #fff; }
   .tile .num { position: absolute; top: 8px; right: 8px; background: rgba(0,0,0,.6); border-radius: 5px;
                padding: 1px 7px; font-size: 11px; color: var(--dim); }
-  .tile .zoom { position: absolute; top: 140px; right: 8px; padding: 2px 9px; font-size: 12px;
+  .tile .zoom { position: absolute; top: calc(var(--pic) - 36px); right: 8px; padding: 2px 9px; font-size: 12px;
                 background: rgba(0,0,0,.72); border-color: rgba(255,255,255,.18); opacity: 0; }
   .tile:hover .zoom, .tile .zoom:focus-visible { opacity: 1; }
   .score { display: flex; align-items: center; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
@@ -160,7 +173,7 @@
   .notice[hidden], body:not(.remote) #netnote { display: none; }
 
   /* Choosing shots to download to the phone. */
-  .tile .pick { position: absolute; top: 140px; left: 8px; padding: 2px 9px; font-size: 12px;
+  .tile .pick { position: absolute; top: calc(var(--pic) - 36px); left: 8px; padding: 2px 9px; font-size: 12px;
                 background: rgba(0,0,0,.72); border-color: rgba(255,255,255,.18); }
   .tile.picked .pick { background: var(--focus); border-color: var(--focus); color: #06182c; font-weight: 600; }
   .tile.picked { outline: 2px solid var(--focus); outline-offset: 2px; }
@@ -187,10 +200,18 @@
     main { padding: 12px 12px 70px; }
     .group { padding: 10px; }
     .tiles { gap: 8px; }
+    body { --pic: 118px; }
     .tile { width: calc(50% - 4px); }
-    .tile .pic { height: 118px; }
-    .tile img { max-height: 118px; }
-    .tile .zoom, .tile .pick { top: 86px; }
+    body.size-s { --pic: 84px; }
+    body.size-s .tile { width: calc(33.33% - 6px); }
+    body.size-s .tile .cap .sub, body.size-s .tile .score, body.size-s .tile .tags,
+    body.size-s .tile .num { display: none; }
+    body.size-s .tile .cap { padding: 5px 6px; }
+    body.size-s .tile .name { font-size: 11px; }
+    body.size-s .tile .zoom, body.size-s .tile .pick { font-size: 11px; padding: 1px 6px; top: calc(var(--pic) - 28px); }
+    body.size-l { --pic: 64vw; }
+    body.size-l .tile { width: 100%; }
+    .findrow input[type=search] { flex: 1 1 100%; }
     .notice { padding: 6px 12px; font-size: 12px; }
     .keys { display: none; }
     #boxbar { flex-wrap: wrap; padding: 10px 12px; gap: 8px; }
@@ -268,12 +289,31 @@
       <button id="clear">Unmark all</button>
       <button id="dl" hidden></button>
     </div>
+    <div class="row findrow">
+      <input type="search" id="find" placeholder="Find a file, e.g. 0154" autocomplete="off" spellcheck="false"
+             title="Matches any part of the file or folder name">
+      <select id="day" title="Show one day only"><option value="">All days</option></select>
+      <select id="sort" title="Order">
+        <option value="time-asc">Oldest first</option>
+        <option value="time-desc">Newest first</option>
+        <option value="name">File name</option>
+        <option value="size-desc">Largest first</option>
+        <option value="score-asc">Lowest score first</option>
+        <option value="tilt-desc">Most tilted first</option>
+        <option value="exposure-asc">Worst exposure first</option>
+      </select>
+      <div class="seg" id="sizes" title="Picture size">
+        <button data-size="s">S</button><button data-size="m" class="on">M</button><button data-size="l">L</button>
+      </div>
+      <span id="matchinfo"></span>
+    </div>
     <div class="notice" id="phonebar" hidden>
       <span><b>Phone access is on.</b> This folder can be viewed, trashed and downloaded over your Wi-Fi, unencrypted.</span>
       <button id="phonemanage">Manage</button>
     </div>
     <div class="notice" id="netnote">
       <span>Photos and downloads travel over this Wi-Fi <b>unencrypted</b>. Use a network you trust.</span>
+      <button class="x" id="netnotex" title="Hide until the page is reloaded" aria-label="Hide">✕</button>
     </div>
   </header>
   <main>
@@ -414,6 +454,7 @@ async function loadGroups(keepMarks) {
   groups = data.groups; singles = data.singles;
   unique.shots = singles;
   every.shots = singles.concat(...groups.map(g => g.shots)).sort((a, b) => a.taken - b.taken || (a.name < b.name ? -1 : 1));
+  fillDays();
   const restore = $("restore"); restore.hidden = !state.skipped;
   restore.textContent = "Restore " + fmtNum(state.skipped) + " skipped";
   const old = marks; marks = new Map(); byId = new Map();
@@ -436,32 +477,99 @@ async function loadGroups(keepMarks) {
 const matches = (g, f) => f === "all" || (f === "video" ? g.shots.some(s => s.video) : g.kind === f);
 const unique = { id: "unique", kind: "unique", shots: [] };  // every shot with no look-alike, as one big set
 const every = { id: "every", kind: "every", shots: [] };     // every photo, oldest first
-const isFlat = g => g === unique || g === every;
+const isFlat = g => !!g && (g.kind === "unique" || g.kind === "every");
 const flatOf = f => f === "unique" ? unique : f === "every" ? every : null;
+let flatView = null;   // the flat set as currently shown: found, day-filtered and sorted
+
+/* ---------- find, day and order ---------- */
+const dayKey = t => { const d = new Date(t * 1000);
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); };
+function shotMatches(s) {
+  const q = $("find").value.trim().toLowerCase(), day = $("day").value;
+  if (day && dayKey(s.taken) !== day) return false;
+  return !q || (s.name + " " + s.folder).toLowerCase().includes(q);
+}
+const scoreOf = s => s.score ? (s.score.overall != null ? s.score.overall : s.score.exposure) : 101;
+const SORTS = {
+  "time-asc": (a, b) => a.taken - b.taken,
+  "time-desc": (a, b) => b.taken - a.taken,
+  "name": (a, b) => (a.name + a.folder).localeCompare(b.name + b.folder, undefined, { numeric: true }),
+  "size-desc": (a, b) => b.size - a.size,
+  "score-asc": (a, b) => scoreOf(a) - scoreOf(b),
+  "tilt-desc": (a, b) => ((b.score && b.score.tilt) ?? -1) - ((a.score && a.score.tilt) ?? -1),
+  "exposure-asc": (a, b) => ((a.score && a.score.exposure) ?? 101) - ((b.score && b.score.exposure) ?? 101),
+};
+function sortShots(list) {
+  const cmp = SORTS[$("sort").value] || SORTS["time-asc"];
+  return list.slice().sort((a, b) => cmp(a, b) || a.taken - b.taken || a.name.localeCompare(b.name));
+}
+/* Groups are ordered by the shot that best fits the order (e.g. their most tilted shot). */
+function sortGroups(list) {
+  const key = $("sort").value;
+  if (key === "size-desc") return list.slice().sort((a, b) => b.shots.length - a.shots.length || a.taken - b.taken);
+  return list.map(g => [sortShots(g.shots)[0], g]).sort((x, y) => (SORTS[key] || SORTS["time-asc"])(x[0], y[0]) || x[1].taken - y[1].taken).map(x => x[1]);
+}
+function fillDays() {
+  const sel = $("day"), keep = sel.value, counts = new Map();
+  for (const s of every.shots) { const k = dayKey(s.taken); counts.set(k, (counts.get(k) || 0) + 1); }
+  sel.length = 1;
+  for (const [k, n] of [...counts].sort()) {
+    const label = new Date(k + "T12:00:00").toLocaleDateString([], { dateStyle: "medium" }) + "  (" + n + ")";
+    sel.add(new Option(label, k));
+  }
+  sel.value = counts.has(keep) ? keep : "";
+}
+let findTimer = null;
+$("find").oninput = () => { clearTimeout(findTimer); findTimer = setTimeout(applyFilter, 150); };
+$("day").onchange = () => applyFilter();
+$("sort").onchange = () => applyFilter();
+document.querySelectorAll("[data-size]").forEach(b => b.onclick = () => {
+  document.body.classList.remove("size-s", "size-l");
+  if (b.dataset.size !== "m") document.body.classList.add("size-" + b.dataset.size);
+  document.querySelectorAll("[data-size]").forEach(x => x.classList.toggle("on", x === b));
+  applyFilter();   // redraw so Large switches to sharper pictures
+});
+$("netnotex").onclick = () => { $("netnote").hidden = true; };
+
+/* ---------- hide the top bar while scrolling down ---------- */
+let lastY = 0;
+window.addEventListener("scroll", () => {
+  const y = window.scrollY, head = document.querySelector("header");
+  if (y < 80 || y < lastY - 4) head.classList.remove("tuck");
+  else if (y > lastY + 4) head.classList.add("tuck");
+  lastY = y;
+}, { passive: true });
 const UPAGE = 120;
 
 function applyFilter() {
-  const flat = flatOf(filter);
-  shown = flat ? [] : groups.filter(g => matches(g, filter));
+  const base = flatOf(filter);
+  const flat = flatView = base ? { id: base.id, kind: base.kind, shots: sortShots(base.shots.filter(shotMatches)) } : null;
+  shown = flat ? [] : sortGroups(groups.filter(g => matches(g, filter) && g.shots.some(shotMatches)));
+  const narrowed = $("find").value.trim() || $("day").value;
+  $("matchinfo").textContent = !narrowed ? "" : flat
+    ? fmtNum(flat.shots.length) + " of " + fmtNum(base.shots.length) + " photos match"
+    : fmtNum(shown.length) + " groups match";
   document.querySelectorAll("[data-filter]").forEach(b => {
     b.classList.toggle("on", b.dataset.filter === filter);
     const f = flatOf(b.dataset.filter);
     b.querySelector("i").textContent = f ? f.shots.length : groups.filter(g => matches(g, b.dataset.filter)).length;
+    // (tab counts stay unfiltered, so they still describe the whole folder)
   });
   $("list").textContent = ""; rendered = 0; focus = 0;
   $("bestall").hidden = !!flat;
   const empty = $("empty"), nothing = flat ? !flat.shots.length : !shown.length;
   empty.hidden = !nothing; $("keys").hidden = nothing;
   if (flat) {
-    empty.firstElementChild.textContent = flat === unique ? "No unique shots" : "No photos";
-    empty.lastElementChild.textContent = flat === unique ? "Every shot in this folder has a look-alike." : "Nothing readable was found in this folder.";
+    empty.firstElementChild.textContent = narrowed ? "No matches" : flat.kind === "unique" ? "No unique shots" : "No photos";
+    empty.lastElementChild.textContent = narrowed ? "Nothing matches the name or day you chose."
+      : flat.kind === "unique" ? "Every shot in this folder has a look-alike." : "Nothing readable was found in this folder.";
     if (flat.shots.length) {
       const card = el("div", "group"); card.dataset.gid = flat.id;
       const head = el("div", "ghead");
-      head.appendChild(el("span", "badge " + flat.kind, flat === unique ? "Unique shots" : "Every photo"));
-      head.appendChild(el("span", "gmeta", flat.shots.length.toLocaleString() + (flat === unique
-        ? " shots with no look-alike, oldest first. Click any you want to trash."
-        : " photos, oldest first. Click any you want to trash, or go through them one by one.")));
+      head.appendChild(el("span", "badge " + flat.kind, flat.kind === "unique" ? "Unique shots" : "Every photo"));
+      head.appendChild(el("span", "gmeta", flat.shots.length.toLocaleString() + (flat.kind === "unique"
+        ? " shots with no look-alike, " + $("sort").selectedOptions[0].text.toLowerCase() + ". Click any you want to trash."
+        : " photos, " + $("sort").selectedOptions[0].text.toLowerCase() + ". Click any you want to trash, or go through them one by one.")));
       const one = el("button", "onebyone", "Review one by one");
       one.title = "Full size, one photo at a time: ← → to move, X to mark for the Trash";
       one.onclick = () => openBox(flat, 0);
@@ -475,13 +583,15 @@ function applyFilter() {
                       empty.lastElementChild.textContent = "Nothing readable was found in this folder. Choose another one from the top left."; }
   else if (!groups.length) { empty.firstElementChild.textContent = "All clean";
                              empty.lastElementChild.textContent = fmtNum(state.files) + " files checked, with no duplicates or look-alike shots. Try a looser setting to catch more."; }
+  else if (narrowed) { empty.firstElementChild.textContent = "No matches";
+                       empty.lastElementChild.textContent = "No group has a photo matching the name or day you chose. Try the Every photo tab."; }
   else { empty.firstElementChild.textContent = "Nothing in this view";
          empty.lastElementChild.textContent = "No groups of this kind."; }
   renderMore(); updateStats();
 }
 
 function renderMore() {
-  const flat = flatOf(filter);
+  const flat = flatView;
   if (flat) {
     const tiles = document.querySelector('.group[data-gid="' + flat.id + '"] .tiles'); if (!tiles) return;
     const stop = Math.min(flat.shots.length, rendered + UPAGE);
@@ -519,7 +629,9 @@ function renderGroup(g, idx) {
 function renderTile(g, s, i) {
   const t = el("div", "tile"); t.dataset.sid = s.id;
   const pic = el("div", "pic");
-  if (s.thumb) { const img = el("img"); img.loading = "lazy"; img.src = "/thumb/" + s.id; img.alt = s.name; pic.appendChild(img); }
+  // Large pictures use the sharper preview (made on first view, so only for tiles on screen).
+  const src = document.body.classList.contains("size-l") && !s.video ? "/preview/" : "/thumb/";
+  if (s.thumb) { const img = el("img"); img.loading = "lazy"; img.src = src + s.id; img.alt = s.name; pic.appendChild(img); }
   else pic.appendChild(el("span", "nothumb", "No preview"));
   t.appendChild(pic);
   t.appendChild(el("span", "state"));
@@ -747,8 +859,8 @@ $("trash").onclick = async () => {
     state = await getState();
     await loadGroups(true);
     // Reviewing one by one: stay in the viewer, on the photo after the ones just trashed.
-    if (box && isFlat(box.group) && box.group.shots.length) {
-      box.i = Math.min(box.i, box.group.shots.length - 1); showBox();
+    if (box && isFlat(box.group) && flatView && flatView.shots.length) {
+      box.group = flatView; box.i = Math.min(box.i, flatView.shots.length - 1); showBox();
     } else if (box) closeBox();
   } catch (e) { toast(e.message); updateStats(); }
 };
@@ -766,7 +878,7 @@ document.addEventListener("keydown", e => {
     else return;
     return e.preventDefault();
   }
-  const flat = flatOf(filter);
+  const flat = flatView;
   if (flat && k === " " && flat.shots.length) { openBox(flat, 0); return e.preventDefault(); }
   const g = shown[focus]; if (!g) return;
   if (k === "j") setFocus(focus + 1, true);
@@ -780,7 +892,7 @@ document.addEventListener("keydown", e => {
 });
 
 new IntersectionObserver(es => {
-  if (es[0].isIntersecting && rendered < (flatOf(filter) ? flatOf(filter).shots.length : shown.length)) renderMore(); },
+  if (es[0].isIntersecting && rendered < (flatView ? flatView.shots.length : shown.length)) renderMore(); },
                          { rootMargin: "800px" }).observe($("more"));
 sync(false);
 </script>

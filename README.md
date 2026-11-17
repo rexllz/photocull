@@ -90,6 +90,23 @@ Tabs:
 
 ![Unique tab](docs/unique.png)
 
+Finding a photo among thousands (the row under the toolbar):
+
+- **Find**: type any part of a file or folder name, e.g. `0154` for
+  `DSC_0154.JPG`.
+- **Day**: show one day only; each day lists how many photos it has.
+- **Order**: oldest or newest first, file name, largest first, lowest score
+  first, most tilted first, or worst exposure first. In the group tabs, groups
+  are ordered by the shot that fits best (e.g. their most tilted shot), and
+  "largest first" puts the biggest groups first.
+- **S / M / L**: picture size. **L** shows one large, sharper picture per row
+  on a phone.
+
+The tab counts always describe the whole folder; the number of matches shows
+next to the size buttons. The top bar slides away while you scroll down and
+comes back as soon as you scroll up. On the phone, the Wi-Fi warning can be
+hidden with ✕ until the page is reloaded.
+
 Controls:
 
 - **Strict / Loose**: how alike two shots must look to be grouped.
