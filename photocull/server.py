@@ -125,6 +125,9 @@ class App:
         self.done = self.total = 0
         self.phase = ""
         self.rows, self.groups, self.shots, self.singles = [], [], {}, []
+        # Shots the user said are not duplicates ("keep all, skip this group"). Memory
+        # only, on purpose: forgotten when another folder is opened or the app restarts.
+        self.skipped = set()
         # Phone access: off until switched on from the Mac. It gets its own key and
         # its own listener on the network address, both discarded when switched off.
         self.handler = self.port = None
@@ -172,6 +175,8 @@ class App:
         with self.lock:
             if self.status == "scanning":
                 return "A scan is already running."
+            if str(root.resolve()) != self.root:
+                self.skipped = set()   # Refresh of the same folder keeps them
             self.status, self.root, self.error = "scanning", str(root.resolve()), None
             self.done = self.total = 0
             self.phase = ""
@@ -198,13 +203,32 @@ class App:
 
     def _group(self):
         shots = grouping.build_shots(self.rows)
-        self.groups = grouping.group_shots(shots, threshold=self.threshold, window=self.window)
+        groups = grouping.group_shots(shots, threshold=self.threshold, window=self.window)
+        # Skipped shots leave their group; a group left with one shot is no group.
+        for g in groups:
+            g["shots"] = [s for s in g["shots"] if s["id"] not in self.skipped]
+        self.groups = [g for g in groups if len(g["shots"]) > 1]
+        for n, g in enumerate(self.groups):
+            g["id"] = n
         self.shots = {s["id"]: s for s in shots}
         grouped = {s["id"] for g in self.groups for s in g["shots"]}
         self.singles = sorted((s for s in shots if s["id"] not in grouped), key=lambda s: s["taken"])
         for s in self.singles:
             s["identical"] = s["suggest_trash"] = False
             s["score"] = grouping.assess_alone(s)
+
+    def skip(self, ids, skipped=True):
+        """Mark shots as not duplicates (they move to Unique), or bring them back.
+        With no ids, `skipped=False` restores everything."""
+        with self.lock:
+            if ids is None and not skipped:
+                self.skipped = set()
+            elif skipped:
+                self.skipped |= {i for i in ids if i in self.shots}
+            else:
+                self.skipped -= set(ids)
+            if self.status == "ready":
+                self._group()
 
     def regroup(self, threshold, window):
         with self.lock:
@@ -220,6 +244,7 @@ class App:
                 "unreadable": sum(1 for r in self.rows if not r["dhash"]),
                 "threshold": self.threshold, "window": self.window,
                 "videos": index.INCLUDE_VIDEOS, "phone": bool(self.phone_token),
+                "skipped": len(self.skipped & set(self.shots)),
                 "recent": recent_folders()}
 
     def _shot_json(self, s):
@@ -229,7 +254,7 @@ class App:
                 "w": s["rep"]["w"], "h": s["rep"]["h"], "taken": s["taken"],
                 "files": len(s["files"]), "original": s["rep"]["size"], "identical": s["identical"],
                 "suggest": s["suggest_trash"], "thumb": bool(s["rep"]["thumb"]),
-                "score": s.get("score")}
+                "score": s.get("score"), "skipped": s["id"] in self.skipped}
 
     def payload(self):
         """Groups to review, plus every shot that has no look-alike."""
@@ -462,7 +487,7 @@ def make_handler(app):
                 # The phone may review and trash within the folder already open. Choosing
                 # folders, Finder and the phone switch itself stay on the Mac.
                 reopen = self.path == "/api/open" and data.get("path") == app.root
-                if self.path not in ("/api/settings", "/api/trash") and not reopen:
+                if self.path not in ("/api/settings", "/api/trash", "/api/skip") and not reopen:
                     return self.send_error(403)
             if self.path == "/api/phone":
                 error = app.phone_on() if data.get("on") else app.phone_off()
@@ -482,6 +507,12 @@ def make_handler(app):
                 if not isinstance(ids, list):
                     return self.send_error(400)
                 return self._json(app.trash([i for i in ids if isinstance(i, str)]))
+            if self.path == "/api/skip":
+                ids = data.get("ids")
+                if ids is not None and not (isinstance(ids, list) and all(isinstance(i, str) for i in ids)):
+                    return self.send_error(400)
+                app.skip(ids, bool(data.get("skip", True)))
+                return self._json(self._state())
             if self.path == "/api/reveal":
                 shot = app.shots.get(data.get("id"))
                 if shot:

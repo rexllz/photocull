@@ -85,6 +85,9 @@
   .badge.exact { background: #3a2229; color: #ff9eab; }
   .badge.similar { background: #1f2f47; color: #9dc9ff; }
   .badge.unique { background: #2a2d33; color: #c9ced6; }
+  .badge.every { background: #2b2540; color: #c8b8ff; }
+  .tag.kept { color: #c8b8ff; border-color: #6b5aa8; }
+  .ghead .onebyone { background: var(--focus); border-color: var(--focus); color: #06182c; font-weight: 600; }
   .gmeta { color: var(--dim); flex: 1; }
   .gwarn { color: var(--accent); font-weight: 600; }
   .ghead button { padding: 4px 10px; font-size: 13px; }
@@ -244,6 +247,7 @@
         <button data-filter="similar">Similar<i></i></button>
         <button data-filter="video">Videos<i></i></button>
         <button data-filter="unique" title="Shots with no look-alike">Unique<i></i></button>
+        <button data-filter="every" title="Every photo, oldest first, to go through one by one">Every photo<i></i></button>
       </div>
       <div id="stats"></div>
       <button id="trash" class="danger" disabled>Move to Trash</button>
@@ -260,6 +264,7 @@
       <button id="phone" class="ghost" title="Review from a phone on the same Wi-Fi">Phone</button>
       <div class="grow"></div>
       <button id="bestall" title="In every group shown, mark everything except the best shot">Keep best only in shown groups</button>
+      <button id="restore" class="ghost" hidden title="Put back the groups you marked as not duplicates"></button>
       <button id="clear">Unmark all</button>
       <button id="dl" hidden></button>
     </div>
@@ -289,6 +294,7 @@
     <button id="boxstate" title="Click to switch (X)"></button>
     <button id="boxopen" title="Open the full-size original; long-press it to save to Photos">Original</button>
     <button id="boxdl" title="Save the original file to this phone">Download</button>
+    <button id="boxtrash" class="danger" hidden title="Move every shot marked TRASH to the Trash now"></button>
     <button id="boxreveal">Show in Finder</button>
     <button id="boxclose">Close</button>
   </div>
@@ -407,6 +413,9 @@ async function loadGroups(keepMarks) {
   const data = await (await fetch("/api/groups")).json();
   groups = data.groups; singles = data.singles;
   unique.shots = singles;
+  every.shots = singles.concat(...groups.map(g => g.shots)).sort((a, b) => a.taken - b.taken || (a.name < b.name ? -1 : 1));
+  const restore = $("restore"); restore.hidden = !state.skipped;
+  restore.textContent = "Restore " + fmtNum(state.skipped) + " skipped";
   const old = marks; marks = new Map(); byId = new Map();
   for (const g of groups.concat([unique])) for (const s of g.shots) {
     marks.set(s.id, keepMarks && old.has(s.id) ? old.get(s.id) : s.suggest); byId.set(s.id, s);
@@ -426,28 +435,37 @@ async function loadGroups(keepMarks) {
 
 const matches = (g, f) => f === "all" || (f === "video" ? g.shots.some(s => s.video) : g.kind === f);
 const unique = { id: "unique", kind: "unique", shots: [] };  // every shot with no look-alike, as one big set
+const every = { id: "every", kind: "every", shots: [] };     // every photo, oldest first
+const isFlat = g => g === unique || g === every;
+const flatOf = f => f === "unique" ? unique : f === "every" ? every : null;
 const UPAGE = 120;
 
 function applyFilter() {
-  const isUnique = filter === "unique";
-  shown = isUnique ? [] : groups.filter(g => matches(g, filter));
+  const flat = flatOf(filter);
+  shown = flat ? [] : groups.filter(g => matches(g, filter));
   document.querySelectorAll("[data-filter]").forEach(b => {
     b.classList.toggle("on", b.dataset.filter === filter);
-    b.querySelector("i").textContent = b.dataset.filter === "unique" ? singles.length
-      : groups.filter(g => matches(g, b.dataset.filter)).length;
+    const f = flatOf(b.dataset.filter);
+    b.querySelector("i").textContent = f ? f.shots.length : groups.filter(g => matches(g, b.dataset.filter)).length;
   });
   $("list").textContent = ""; rendered = 0; focus = 0;
-  $("bestall").hidden = isUnique;
-  const empty = $("empty"), nothing = isUnique ? !singles.length : !shown.length;
+  $("bestall").hidden = !!flat;
+  const empty = $("empty"), nothing = flat ? !flat.shots.length : !shown.length;
   empty.hidden = !nothing; $("keys").hidden = nothing;
-  if (isUnique) {
-    empty.firstElementChild.textContent = "No unique shots";
-    empty.lastElementChild.textContent = "Every shot in this folder has a look-alike.";
-    if (singles.length) {
-      const card = el("div", "group"); card.dataset.gid = unique.id;
+  if (flat) {
+    empty.firstElementChild.textContent = flat === unique ? "No unique shots" : "No photos";
+    empty.lastElementChild.textContent = flat === unique ? "Every shot in this folder has a look-alike." : "Nothing readable was found in this folder.";
+    if (flat.shots.length) {
+      const card = el("div", "group"); card.dataset.gid = flat.id;
       const head = el("div", "ghead");
-      head.appendChild(el("span", "badge unique", "Unique shots"));
-      head.appendChild(el("span", "gmeta", singles.length.toLocaleString() + " shots with no look-alike, oldest first. Click any you want to trash."));
+      head.appendChild(el("span", "badge " + flat.kind, flat === unique ? "Unique shots" : "Every photo"));
+      head.appendChild(el("span", "gmeta", flat.shots.length.toLocaleString() + (flat === unique
+        ? " shots with no look-alike, oldest first. Click any you want to trash."
+        : " photos, oldest first. Click any you want to trash, or go through them one by one.")));
+      const one = el("button", "onebyone", "Review one by one");
+      one.title = "Full size, one photo at a time: ← → to move, X to mark for the Trash";
+      one.onclick = () => openBox(flat, 0);
+      head.appendChild(one);
       card.append(head, el("div", "tiles"));
       $("list").appendChild(card);
     }
@@ -463,11 +481,12 @@ function applyFilter() {
 }
 
 function renderMore() {
-  if (filter === "unique") {
-    const tiles = document.querySelector('.group[data-gid="unique"] .tiles'); if (!tiles) return;
-    const stop = Math.min(singles.length, rendered + UPAGE);
+  const flat = flatOf(filter);
+  if (flat) {
+    const tiles = document.querySelector('.group[data-gid="' + flat.id + '"] .tiles'); if (!tiles) return;
+    const stop = Math.min(flat.shots.length, rendered + UPAGE);
     for (; rendered < stop; rendered++) {
-      const t = renderTile(unique, singles[rendered], rendered); tiles.appendChild(t); paintTile(t, singles[rendered]);
+      const t = renderTile(flat, flat.shots[rendered], rendered); tiles.appendChild(t); paintTile(t, flat.shots[rendered]);
     }
     return;
   }
@@ -484,7 +503,10 @@ function renderGroup(g, idx) {
   head.appendChild(el("span", "gwarn"));
   const best = el("button", null, "Keep best only"); best.onclick = () => keepBest(g);
   const all = el("button", null, "Keep all"); all.onclick = () => keepAll(g);
-  head.append(best, all);
+  const skip = el("button", null, "Not duplicates");
+  skip.title = "Keep every shot and move them to Unique (forgotten when photocull restarts)";
+  skip.onclick = () => skipGroup(g);
+  head.append(best, all, skip);
   card.appendChild(head);
   const tiles = el("div", "tiles");
   g.shots.forEach((s, i) => tiles.appendChild(renderTile(g, s, i)));
@@ -501,7 +523,7 @@ function renderTile(g, s, i) {
   else pic.appendChild(el("span", "nothumb", "No preview"));
   t.appendChild(pic);
   t.appendChild(el("span", "state"));
-  if (g !== unique) t.appendChild(el("span", "num", String(i + 1)));
+  if (!isFlat(g)) t.appendChild(el("span", "num", String(i + 1)));
   const pick = el("button", "pick");
   pick.onclick = e => { e.stopPropagation(); picks.has(s.id) ? picks.delete(s.id) : picks.add(s.id); paintTile(t, s); updateStats(); };
   t.appendChild(pick);
@@ -512,13 +534,14 @@ function renderTile(g, s, i) {
   const name = el("div", "name", s.name); name.title = s.folder + "/" + s.name;
   cap.appendChild(name);
   cap.appendChild(el("div", "sub", (s.w ? s.w + " × " + s.h + " · " : "") + fmtSize(s.size)));
-  if (g === unique) cap.appendChild(el("div", "sub", fmtTime(s.taken)));
+  if (isFlat(g)) cap.appendChild(el("div", "sub", fmtTime(s.taken)));
   const folder = el("div", "sub", s.folder === "." ? "top folder" : s.folder); folder.title = s.folder;
   cap.appendChild(folder);
   const score = renderScore(s.score);
   if (score) cap.appendChild(score);
   const tags = el("div", "tags");
-  if (i === 0 && g !== unique) tags.appendChild(el("span", "tag best", "Best"));
+  if (i === 0 && !isFlat(g)) tags.appendChild(el("span", "tag best", "Best"));
+  if (s.skipped) tags.appendChild(el("span", "tag kept", "Not a duplicate"));
   if (s.raw) tags.appendChild(el("span", "tag", s.files > 1 ? "RAW + JPG" : "RAW"));
   if (s.video) tags.appendChild(el("span", "tag", "Video"));
   if (s.identical) tags.appendChild(el("span", "tag", "Identical copy"));
@@ -569,7 +592,7 @@ function paintGroup(g, card) {
     const t = card.querySelector('.tile[data-sid="' + s.id + '"]');
     if (t && paintTile(t, s)) gone++;   // unique shots further down may not be drawn yet
   }
-  if (g === unique) return;
+  if (isFlat(g)) return;
   const allGone = gone === g.shots.length;
   card.classList.toggle("allgone", allGone);
   card.querySelector(".gwarn").textContent = allGone ? "Every shot in this group is marked" : "";
@@ -578,6 +601,18 @@ function paintGroup(g, card) {
 function toggle(g, id) { marks.set(id, !marks.get(id)); paintGroup(g); updateStats(); paintBox(); }
 function keepBest(g) { g.shots.forEach((s, i) => marks.set(s.id, i > 0)); paintGroup(g); updateStats(); }
 function keepAll(g) { g.shots.forEach(s => marks.set(s.id, false)); paintGroup(g); updateStats(); }
+async function skipGroup(g) {
+  g.shots.forEach(s => marks.set(s.id, false));
+  try {
+    state = Object.assign(state, await post("/api/skip", { ids: g.shots.map(s => s.id), skip: true }));
+    await loadGroups(true);
+    toast(g.shots.length + " shots kept and moved to Unique. Restore from the toolbar.");
+  } catch (e) { toast(e.message); }
+}
+$("restore").onclick = async () => {
+  try { state = Object.assign(state, await post("/api/skip", { skip: false })); await loadGroups(true); toast("Skipped groups are back."); }
+  catch (e) { toast(e.message); }
+};
 function marked() { const out = []; for (const g of groups.concat([unique])) for (const s of g.shots) if (marks.get(s.id)) out.push(s); return out; }
 
 function updateStats() {
@@ -616,6 +651,8 @@ function paintBox() {
   info.append(el("b", null, (box.i + 1) + " of " + box.group.shots.length + "   " + s.name),
               "   " + (s.w ? s.w + " × " + s.h + " · " : "") + fmtSize(s.size) + " · " + fmtTime(s.taken) +
               (s.score ? "   ·   " + (s.score.overall != null ? "Score " + s.score.overall + " · " : "") + scoreParts(s.score).map(p => p.text).join(" · ") : ""));
+  const n = marked().length, bt = $("boxtrash");
+  bt.hidden = !n; bt.textContent = "Move " + fmtNum(n) + " to Trash";
   const st = $("boxstate"); st.textContent = m ? "TRASH" : "KEEP";
   st.style.background = m ? "var(--trash)" : "var(--keep)"; st.style.color = m ? "#fff" : "#05281a";
 }
@@ -709,8 +746,13 @@ $("trash").onclick = async () => {
           (r.failed.length ? " " + r.failed.length + " files could not be moved." : ""));
     state = await getState();
     await loadGroups(true);
+    // Reviewing one by one: stay in the viewer, on the photo after the ones just trashed.
+    if (box && isFlat(box.group) && box.group.shots.length) {
+      box.i = Math.min(box.i, box.group.shots.length - 1); showBox();
+    } else if (box) closeBox();
   } catch (e) { toast(e.message); updateStats(); }
 };
+$("boxtrash").onclick = () => $("trash").onclick();
 
 document.addEventListener("keydown", e => {
   if (e.metaKey || e.ctrlKey || e.altKey || document.body.dataset.view !== "review") return;
@@ -724,6 +766,8 @@ document.addEventListener("keydown", e => {
     else return;
     return e.preventDefault();
   }
+  const flat = flatOf(filter);
+  if (flat && k === " " && flat.shots.length) { openBox(flat, 0); return e.preventDefault(); }
   const g = shown[focus]; if (!g) return;
   if (k === "j") setFocus(focus + 1, true);
   else if (k === "k") setFocus(focus - 1, true);
@@ -736,7 +780,7 @@ document.addEventListener("keydown", e => {
 });
 
 new IntersectionObserver(es => {
-  if (es[0].isIntersecting && rendered < (filter === "unique" ? singles.length : shown.length)) renderMore(); },
+  if (es[0].isIntersecting && rendered < (flatOf(filter) ? flatOf(filter).shots.length : shown.length)) renderMore(); },
                          { rootMargin: "800px" }).observe($("more"));
 sync(false);
 </script>

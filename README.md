@@ -69,6 +69,11 @@ Each group shows the shots side by side, best first.
 
 - Click a shot to switch it between **KEEP** and **TRASH**.
 - **Keep best only** / **Keep all** work per group, or on every group shown.
+- **Not duplicates** on a group keeps all its shots and moves them to Unique,
+  tagged "Not a duplicate", so the group stops coming back. This is kept in
+  memory only: it lasts through Refresh and setting changes, and is forgotten
+  when you open another folder or restart photocull. **Restore N skipped**
+  in the toolbar puts the groups back.
 - **View** opens a shot full size; `←` `→` flip between the shots of a group.
 - **Move to Trash** moves everything marked to the macOS Trash. Nothing is
   deleted permanently until you empty the Trash.
@@ -81,6 +86,7 @@ Tabs:
 | **Identical** | Byte-for-byte copies, e.g. a card imported twice. Extras start out marked for the Trash. |
 | **Similar** | Look-alike shots: bursts, retakes, a subject that moved. Nothing is pre-marked. |
 | **Unique** | Every shot with no look-alike, so you can see what was left out and trash any of those too. |
+| **Every photo** | All photos, oldest first. **Review one by one** opens them full size: `←` `→` (or swipe) to move, `X` (or tap KEEP/TRASH) to mark, **Move N to Trash** without leaving the viewer, and on a phone **Download**. |
 
 ![Unique tab](docs/unique.png)
 

@@ -320,6 +320,39 @@ class DownloadTest(unittest.TestCase):
         self.assertEqual(self.get("/download.zip?ids=nope")[0].status, 404)
 
 
+class SkipTest(unittest.TestCase):
+    """'Not duplicates' moves a group's shots to Unique, in memory only."""
+
+    def make_app(self):
+        from photocull import server
+        app = server.App()
+        app.status, app.root = "ready", "/a"
+        app.rows = [row("/a/1.JPG", A, taken=1), row("/a/2.JPG", A, taken=2),
+                    row("/a/3.JPG", A, taken=3), row("/a/9.JPG", B, taken=900, color=200)]
+        app._group()
+        return app
+
+    def test_skipping_a_group_moves_its_shots_to_unique(self):
+        app = self.make_app()
+        self.assertEqual(len(app.groups), 1)
+        ids = [s["id"] for s in app.groups[0]["shots"]]
+        app.skip(ids)
+        self.assertEqual(app.groups, [])
+        self.assertEqual(len(app.singles), 4)
+        self.assertEqual(sum(s["skipped"] for s in app.payload()["singles"]), 3)
+
+    def test_skipping_part_of_a_group_and_restoring(self):
+        app = self.make_app()
+        ids = [s["id"] for s in app.groups[0]["shots"]]
+        app.skip(ids[:1])
+        self.assertEqual(len(app.groups[0]["shots"]), 2)
+        app.regroup(10, 30)                      # survives a settings change
+        self.assertEqual(len(app.groups[0]["shots"]), 2)
+        app.skip(None, False)
+        self.assertEqual(len(app.groups[0]["shots"]), 3)
+        self.assertEqual(app.state()["skipped"], 0)
+
+
 class DemoScriptTest(unittest.TestCase):
     def test_refuses_to_replace_a_folder_it_did_not_make(self):
         import os
