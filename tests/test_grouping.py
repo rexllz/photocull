@@ -23,7 +23,7 @@ class GroupingTest(unittest.TestCase):
         self.assertEqual(dhash_rows([[2, 1, 1, 3]]), 0b100)
 
     def test_raw_and_jpeg_are_one_shot(self):
-        shots = build_shots([row("/p/DSC_1.NEF", A), row("/p/DSC_1.JPG", A), row("/p/DSC_2.JPG", B)])
+        shots = build_shots([row("/p/DSC_1.NEF", A), row("/p/DSC_1.JPG", A), row("/p/DSC_2.JPG", B, color=200)])
         self.assertEqual(sorted(len(s["files"]) for s in shots), [1, 2])
         self.assertEqual(group_shots(shots), [])
 
@@ -53,10 +53,17 @@ class GroupingTest(unittest.TestCase):
         self.assertEqual(group_shots(shots), [])
 
     def test_gradual_drift_does_not_chain_into_one_group(self):
-        step = 2 ** 30 - 1  # each shot differs from the previous by 30 bits, in a new place
-        hashes = [A, A ^ step, A ^ step ^ (step << 40), A ^ step ^ (step << 40) ^ (step << 80)]
-        shots = build_shots([row("/a/%d.JPG" % i, h, taken=i) for i, h in enumerate(hashes)])
-        self.assertTrue(all(len(g["shots"]) < 4 for g in group_shots(shots)))
+        # Each shot is close to the previous one, but the last is far from the first.
+        colors = [100, 112, 124, 136, 148]
+        shots = build_shots([row("/a/%d.JPG" % i, B if i % 2 else A, taken=i, color=c)
+                             for i, c in enumerate(colors)])
+        groups = group_shots(shots)
+        self.assertTrue(groups and all(len(g["shots"]) < 5 for g in groups))
+
+    def test_moved_subject_in_same_scene_groups(self):
+        # Shapes disagree completely (the subject moved) but colours sit in the same places.
+        shots = build_shots([row("/a/1.JPG", A, taken=1, color=100), row("/a/2.JPG", B, taken=4, color=104)])
+        self.assertEqual(names(group_shots(shots)), [("similar", ["1.JPG", "2.JPG"])])
 
     def test_photo_and_video_never_group(self):
         shots = build_shots([row("/a/1.JPG", A, taken=1), row("/a/2.MOV", A, taken=2, kind="video")])

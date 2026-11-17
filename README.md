@@ -27,7 +27,7 @@ files.
 | Group | Meaning | Starts out marked for Trash? |
 |---|---|---|
 | **Identical copies** | Same file content, e.g. the same card imported twice | Yes, all but the best copy |
-| **Similar shots** | Look alike in both shape and colour and were taken within 30 seconds (bursts, retakes), or are near-identical at any time (resized or re-saved copies) | No, you choose |
+| **Similar shots** | The same scene taken within 30 seconds (bursts, retakes, a subject that moved), or are near-identical at any time (resized or re-saved copies) | No, you choose |
 
 A RAW file and its same-named JPEG in the same folder (`DSC_0001.NEF` +
 `DSC_0001.JPG`) count as one shot and are kept or trashed together.
@@ -62,9 +62,15 @@ browser).
 
 Each shot gets two fingerprints from a tiny version of the picture: a 256-bit
 shape hash (where it gets brighter or darker) and a 4x4 grid of average colours.
-Two shots count as similar only when both agree. A shot joins a burst only if it
-resembles the burst's first shot as well as its latest, so a slowly changing
-sequence can't chain unrelated pictures into one group.
+
+- **Taken moments apart** (within the "Taken within" time): the same scene if
+  the colours sit in the same places, even when the subject moved, or if the
+  shapes line up and the colours are roughly right (an exposure change).
+- **At any other time**: only near-identical pictures, where shape and colour
+  both match closely (resized or re-saved copies).
+
+A shot joins a run only if it resembles the run's first shot as well as its
+latest, so a slowly changing sequence can't chain unrelated pictures together.
 
 ## Notes
 

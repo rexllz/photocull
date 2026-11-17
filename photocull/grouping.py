@@ -46,6 +46,21 @@ def build_shots(rows):
     return shots
 
 
+def same_scene(a, b, looseness):
+    """For shots taken moments apart: the same scene, even if the subject moved.
+
+    Being taken back to back is itself strong evidence, so either clue is enough:
+    the colours sit in the same places (shape may differ because something moved),
+    or the shapes line up and the colours are roughly right (exposure changed).
+    """
+    if a["video"] != b["video"]:
+        return False
+    color = color_distance(a["color"], b["color"])
+    if color <= 1.6 * looseness:
+        return True
+    return color <= 10 + 3 * looseness and hamming(a["dhash"], b["dhash"]) <= 6 * looseness
+
+
 def _shot(files):
     files = sorted(files, key=lambda f: (f["ext"] in RAW_EXTS, f["path"]))
     rep = files[0]  # the JPEG when there is one: faster to preview
@@ -94,7 +109,6 @@ def group_shots(shots, threshold=10, window=30):
     threshold: looseness, 2 (strict) to 16 (loose), for shots taken within `window`
                seconds of each other. Near-identical copies match at any time.
     """
-    max_bits, max_color = 4 * threshold, 6 + threshold
     u = _Union(len(shots))
 
     # 1. Identical content.
@@ -132,9 +146,9 @@ def group_shots(shots, threshold=10, window=30):
         runs = [r for r in runs if shot["taken"] - shots[r[-1]]["taken"] <= window]
         best = None
         for run in runs:
-            if alike(shot, shots[run[-1]], max_bits, max_color) and \
-                    alike(shot, shots[run[0]], max_bits, max_color):
-                d = hamming(shot["dhash"], shots[run[-1]]["dhash"])
+            if same_scene(shot, shots[run[-1]], threshold) and \
+                    same_scene(shot, shots[run[0]], threshold):
+                d = color_distance(shot["color"], shots[run[-1]]["color"])
                 if best is None or d < best[0]:
                     best = (d, run)
         if best:
