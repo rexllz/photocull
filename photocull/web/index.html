@@ -94,6 +94,7 @@
   .badge.similar { background: #1f2f47; color: #9dc9ff; }
   .badge.unique { background: #2a2d33; color: #c9ced6; }
   .badge.every { background: #2b2540; color: #c8b8ff; }
+  .badge.videos { background: #13323a; color: #8fe1f2; }
   .tag.kept { color: #c8b8ff; border-color: #6b5aa8; }
   .ghead .onebyone { background: var(--focus); border-color: var(--focus); color: #06182c; font-weight: 600; }
   .gmeta { color: var(--dim); flex: 1; }
@@ -182,7 +183,7 @@
   body:not(.remote) #boxdl { display: none; }
 
   /* Signed in from a phone: folder choice, Finder and the phone switch stay on the Mac. */
-  body.remote #phone, body.remote #boxreveal, body.remote #pick, body.remote .or,
+  body.remote #phone, body.remote #boxreveal, body.remote #boxplay, body.remote #pick, body.remote .or,
   body.remote #pathform, body.remote #recent { display: none; }
   body.remote #folder { pointer-events: none; }
   body:not(.remote) #remotehint { display: none; }
@@ -266,9 +267,9 @@
         <button data-filter="all" class="on">All<i></i></button>
         <button data-filter="exact">Identical<i></i></button>
         <button data-filter="similar">Similar<i></i></button>
-        <button data-filter="video">Videos<i></i></button>
         <button data-filter="unique" title="Shots with no look-alike">Unique<i></i></button>
         <button data-filter="every" title="Every photo, oldest first, to go through one by one">Every photo<i></i></button>
+        <button data-filter="video" title="Every video: play, download or trash (not checked for duplicates)">Videos<i></i></button>
       </div>
       <div id="stats"></div>
       <button id="trash" class="danger" disabled>Move to Trash</button>
@@ -335,6 +336,7 @@
     <button id="boxopen" title="Open the full-size original; long-press it to save to Photos">Original</button>
     <button id="boxdl" title="Save the original file to this phone">Download</button>
     <button id="boxtrash" class="danger" hidden title="Move every shot marked TRASH to the Trash now"></button>
+    <button id="boxplay" hidden title="Open in the Mac's video player (plays every format the Mac supports)">Open in QuickTime</button>
     <button id="boxreveal">Show in Finder</button>
     <button id="boxclose">Close</button>
   </div>
@@ -458,15 +460,16 @@ async function loadGroups(keepMarks) {
   const restore = $("restore"); restore.hidden = !state.skipped;
   restore.textContent = "Restore " + fmtNum(state.skipped) + " skipped";
   const old = marks; marks = new Map(); byId = new Map();
-  for (const g of groups.concat([unique])) for (const s of g.shots) {
+  videoSet.shots = data.videos || [];
+  for (const g of groups.concat([unique, videoSet])) for (const s of g.shots) {
     marks.set(s.id, keepMarks && old.has(s.id) ? old.get(s.id) : s.suggest); byId.set(s.id, s);
   }
   picks = new Set([...picks].filter(id => byId.has(id)));
   const name = state.root.slice(state.root.lastIndexOf("/") + 1) || state.root;
   $("folder").textContent = name; $("folder").title = state.root + " — choose another folder";
   document.title = "photocull — " + name;
-  document.querySelector('[data-filter="video"]').hidden = !state.videos;
-  if (!state.videos && filter === "video") filter = "all";
+  document.querySelector('[data-filter="video"]').hidden = !videoSet.shots.length;
+  if (!videoSet.shots.length && filter === "video") filter = "all";
   $("threshold").value = state.threshold;
   const win = $("window");
   if (![...win.options].some(o => +o.value === state.window)) win.add(new Option(state.window + " seconds", state.window));
@@ -474,11 +477,17 @@ async function loadGroups(keepMarks) {
   applyFilter();
 }
 
-const matches = (g, f) => f === "all" || (f === "video" ? g.shots.some(s => s.video) : g.kind === f);
+const matches = (g, f) => f === "all" || g.kind === f;
 const unique = { id: "unique", kind: "unique", shots: [] };  // every shot with no look-alike, as one big set
 const every = { id: "every", kind: "every", shots: [] };     // every photo, oldest first
-const isFlat = g => !!g && (g.kind === "unique" || g.kind === "every");
-const flatOf = f => f === "unique" ? unique : f === "every" ? every : null;
+const videoSet = { id: "videos", kind: "videos", shots: [] }; // videos: listed, never grouped
+const isFlat = g => !!g && (g.kind === "unique" || g.kind === "every" || g.kind === "videos");
+const flatOf = f => f === "unique" ? unique : f === "every" ? every : f === "video" ? videoSet : null;
+const FLAT_TEXT = {
+  unique: ["Unique shots", " shots with no look-alike, %s. Click any you want to trash."],
+  every: ["Every photo", " photos, %s. Click any you want to trash, or go through them one by one."],
+  videos: ["Videos", " videos, %s. Not checked for duplicates. Tap Play to watch, or mark any you want to trash."],
+};
 let flatView = null;   // the flat set as currently shown: found, day-filtered and sorted
 
 /* ---------- find, day and order ---------- */
@@ -547,7 +556,7 @@ function applyFilter() {
   shown = flat ? [] : sortGroups(groups.filter(g => matches(g, filter) && g.shots.some(shotMatches)));
   const narrowed = $("find").value.trim() || $("day").value;
   $("matchinfo").textContent = !narrowed ? "" : flat
-    ? fmtNum(flat.shots.length) + " of " + fmtNum(base.shots.length) + " photos match"
+    ? fmtNum(flat.shots.length) + " of " + fmtNum(base.shots.length) + (flat.kind === "videos" ? " videos match" : " photos match")
     : fmtNum(shown.length) + " groups match";
   document.querySelectorAll("[data-filter]").forEach(b => {
     b.classList.toggle("on", b.dataset.filter === filter);
@@ -566,10 +575,10 @@ function applyFilter() {
     if (flat.shots.length) {
       const card = el("div", "group"); card.dataset.gid = flat.id;
       const head = el("div", "ghead");
-      head.appendChild(el("span", "badge " + flat.kind, flat.kind === "unique" ? "Unique shots" : "Every photo"));
-      head.appendChild(el("span", "gmeta", flat.shots.length.toLocaleString() + (flat.kind === "unique"
-        ? " shots with no look-alike, " + $("sort").selectedOptions[0].text.toLowerCase() + ". Click any you want to trash."
-        : " photos, " + $("sort").selectedOptions[0].text.toLowerCase() + ". Click any you want to trash, or go through them one by one.")));
+      const [title, text] = FLAT_TEXT[flat.kind];
+      head.appendChild(el("span", "badge " + flat.kind, title));
+      head.appendChild(el("span", "gmeta", flat.shots.length.toLocaleString() +
+        text.replace("%s", $("sort").selectedOptions[0].text.toLowerCase())));
       const one = el("button", "onebyone", "Review one by one");
       one.title = "Full size, one photo at a time: ← → to move, X to mark for the Trash";
       one.onclick = () => openBox(flat, 0);
@@ -725,7 +734,7 @@ $("restore").onclick = async () => {
   try { state = Object.assign(state, await post("/api/skip", { skip: false })); await loadGroups(true); toast("Skipped groups are back."); }
   catch (e) { toast(e.message); }
 };
-function marked() { const out = []; for (const g of groups.concat([unique])) for (const s of g.shots) if (marks.get(s.id)) out.push(s); return out; }
+function marked() { const out = []; for (const g of groups.concat([unique, videoSet])) for (const s of g.shots) if (marks.get(s.id)) out.push(s); return out; }
 
 function updateStats() {
   const m = marked(), bytes = m.reduce((a, s) => a + s.size, 0);
@@ -752,7 +761,16 @@ function openBox(g, i) { box = { group: g, i: i }; $("box").classList.add("open"
 function closeBox() { box = null; $("box").classList.remove("open"); $("boxstage").textContent = ""; }
 function showBox() {
   const s = box.group.shots[box.i], stage = $("boxstage"); stage.textContent = "";
-  if (s.video) { const v = el("video"); v.controls = true; v.autoplay = true; v.src = "/media/" + s.id; stage.appendChild(v); }
+  if (s.video) {
+    // Streamed from the Mac as it plays; the phone keeps no copy. playsInline keeps an
+    // iPhone from jumping to full screen, so the KEEP/TRASH controls stay in reach.
+    const v = el("video"); v.controls = true; v.playsInline = true; v.preload = "metadata";
+    v.poster = "/thumb/" + s.id; v.src = "/media/" + s.id;
+    v.onerror = () => toast(document.body.classList.contains("remote")
+      ? "This browser can't play this video. Use Download, or watch it on the Mac."
+      : "This browser can't play this video. Use Open in QuickTime.");
+    stage.appendChild(v);
+  }
   else { const img = el("img"); img.src = "/preview/" + s.id; img.alt = s.name; stage.appendChild(img); }
   paintBox();
 }
@@ -763,6 +781,7 @@ function paintBox() {
   info.append(el("b", null, (box.i + 1) + " of " + box.group.shots.length + "   " + s.name),
               "   " + (s.w ? s.w + " × " + s.h + " · " : "") + fmtSize(s.size) + " · " + fmtTime(s.taken) +
               (s.score ? "   ·   " + (s.score.overall != null ? "Score " + s.score.overall + " · " : "") + scoreParts(s.score).map(p => p.text).join(" · ") : ""));
+  $("boxplay").hidden = !s.video;
   const n = marked().length, bt = $("boxtrash");
   bt.hidden = !n; bt.textContent = "Move " + fmtNum(n) + " to Trash";
   const st = $("boxstate"); st.textContent = m ? "TRASH" : "KEEP";
@@ -820,6 +839,8 @@ $("phoneoff").onclick = async () => {
   $("phonebox").classList.remove("open");
 };
 $("boxreveal").onclick = () => post("/api/reveal", { id: box.group.shots[box.i].id });
+$("boxplay").onclick = () => { const v = $("boxstage").querySelector("video"); if (v) v.pause();
+                               post("/api/play", { id: box.group.shots[box.i].id }); };
 $("boxstate").onclick = () => toggle(box.group, box.group.shots[box.i].id);
 
 /* ---------- toolbar actions ---------- */
@@ -842,12 +863,14 @@ $("bestall").onclick = () => {
   shown.forEach(g => { g.shots.forEach((s, i) => marks.set(s.id, i > 0)); paintGroup(g); });
   updateStats();
 };
-$("clear").onclick = () => { groups.concat([unique]).forEach(g => { g.shots.forEach(s => marks.set(s.id, false)); paintGroup(g); }); updateStats(); };
+$("clear").onclick = () => { groups.concat([unique, videoSet]).forEach(g => { g.shots.forEach(s => marks.set(s.id, false)); paintGroup(g); }); updateStats(); };
 $("trash").onclick = async () => {
   const m = marked(); if (!m.length) return;
   const files = m.reduce((a, s) => a + s.files, 0), bytes = m.reduce((a, s) => a + s.size, 0);
   const wiped = groups.filter(g => g.shots.every(s => marks.get(s.id))).length;
   let msg = "Move " + m.length + " shots (" + files + " files, " + fmtSize(bytes) + ") to the Trash?";
+  const vids = m.filter(s => s.video).length;
+  if (vids) msg += "\n\nThis includes " + vids + " video" + (vids > 1 ? "s" : "") + ".";
   if (wiped) msg += "\n\nWarning: in " + wiped + " group(s) every shot is marked, so no copy will be kept.";
   msg += "\n\nYou can restore them from the Trash until you empty it.";
   if (!confirm(msg)) return;

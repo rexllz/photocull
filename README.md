@@ -86,6 +86,7 @@ Tabs:
 | **Identical** | Byte-for-byte copies, e.g. a card imported twice. Extras start out marked for the Trash. |
 | **Similar** | Look-alike shots: bursts, retakes, a subject that moved. Nothing is pre-marked. |
 | **Unique** | Every shot with no look-alike, so you can see what was left out and trash any of those too. |
+| **Videos** | Every video, to play, download or trash. Videos are never checked for duplicates or scored, and are never marked for the Trash unless you mark them. |
 | **Every photo** | All photos, oldest first. **Review one by one** opens them full size: `←` `→` (or swipe) to move, `X` (or tap KEEP/TRASH) to mark, **Move N to Trash** without leaving the viewer, and on a phone **Download**. |
 
 ![Unique tab](docs/unique.png)
@@ -161,6 +162,13 @@ again.
 Both devices must be on the same Wi-Fi, and the Mac must stay awake. Some
 networks (guest, hotel, some shared building Wi-Fi) block devices from reaching
 each other; phone access cannot work there.
+
+### Videos
+
+Video playback uses the browser's own player. A Mac or iPhone plays camera
+HEVC (H.265) video; if a browser cannot play a file, use **Open in QuickTime**
+on the Mac or **Download** on the phone. Videos stream from the Mac as they
+play, so a long 4K clip needs a good Wi-Fi connection.
 
 ## Scores and the "Best" shot
 
@@ -278,14 +286,38 @@ tests/                      unit tests
   connected.
 - **Your photo folder is never written to.** Thumbnails, scores and the index
   live in `~/Library/Caches/photocull/`; delete that folder to wipe them.
-- **Photos only.** Videos are not scanned or shown, and the Trash action
-  refuses them. (`INCLUDE_VIDEOS` in `photocull/index.py` turns them on; that
-  path is less tested.)
+- **Videos are only trashed when you mark them.** They are listed in their own
+  tab but never grouped, scored or pre-marked.
 
 ### Reporting a security problem
 
 Please open an issue on the repository, without including private details of
 your own setup.
+
+## Where data is stored
+
+**On the Mac**, in `~/Library/Caches/photocull/` (delete the folder any time;
+it is rebuilt as needed):
+
+- a small thumbnail per photo or video (about 50 KB each) and the scan index;
+- full-size previews (about 1 MB each), made only for photos you open full size
+  or view at size L. They are capped at 500 MB, least recently viewed dropped
+  first, and removed when their photo is trashed or no longer in the folder.
+
+**On the phone**, nothing is kept unless you save it:
+
+- Thumbnails and previews may sit in the browser's own temporary cache for up
+  to an hour so scrolling back is quick. iOS clears that cache by itself; it
+  never appears in Photos or Files. Closing the tab, or clearing website data
+  in the browser's settings, removes it at once.
+- Videos and full-size originals are streamed while you watch and are not
+  cached by the browser.
+- **Download** saves the original to the browser's downloads (Files ›
+  Downloads on an iPhone, which may be in iCloud Drive). A zip of several
+  photos lands there too: after you save the photos to Photos, delete the zip
+  in Files, since it is a second copy.
+- Long-press → **Save to Photos** puts a copy in your photo library; that is
+  the only way anything reaches Photos.
 
 ## Limitations
 

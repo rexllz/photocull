@@ -21,7 +21,7 @@ RAW_EXTS = {".nef", ".nrw"}
 JPEG_EXTS = {".jpg", ".jpeg"}
 IMAGE_EXTS = RAW_EXTS | JPEG_EXTS | {".heic", ".heif", ".png", ".tif", ".tiff"}
 VIDEO_EXTS = {".mov", ".mp4", ".m4v", ".avi"}
-INCLUDE_VIDEOS = False  # photos only for now: videos are not scanned, shown or trashed
+PREVIEW_CACHE_BYTES = 500 * 1024 * 1024   # full-size previews kept on the Mac, oldest dropped first
 
 THUMB_PX = 480
 QHASH_CHUNK = 1 << 20  # 1 MB
@@ -80,7 +80,7 @@ def find_media(root):
             ext = os.path.splitext(name)[1].lower()
             if ext in IMAGE_EXTS:
                 yield os.path.join(dirpath, name), "image"
-            elif INCLUDE_VIDEOS and ext in VIDEO_EXTS:
+            elif ext in VIDEO_EXTS:   # listed for review, never checked for duplicates
                 yield os.path.join(dirpath, name), "video"
 
 
@@ -217,7 +217,8 @@ def _process(path, kind, st, thumbs):
             taken, w, h = _image_meta(path)
         else:
             ok = _video_thumb(path, thumb)
-        dhash, color = fingerprint(thumb) if ok else (None, None)
+        # Videos get no fingerprint, so they are never grouped as duplicates.
+        dhash, color = fingerprint(thumb) if ok and kind == "image" else (None, None)
     except (subprocess.TimeoutExpired, OSError):
         ok, dhash, color = False, None, None
     return {"path": path, "size": st.st_size, "mtime": st.st_mtime,
@@ -238,6 +239,34 @@ def _refingerprint(row):
 def _save(db, row):
     db.execute("INSERT OR REPLACE INTO files VALUES (%s)" % ",".join("?" * len(COLUMNS)),
                [row[c] for c in COLUMNS])
+
+
+def prune_previews(cache, keep_ids=None, limit=PREVIEW_CACHE_BYTES):
+    """Keep the preview cache small: drop previews of photos that are gone, then the
+    least recently viewed ones until the total is under `limit`."""
+    folder = Path(cache) / "previews"
+    entries = []
+    for f in folder.glob("*.jpg"):
+        try:
+            st = f.stat()
+        except OSError:
+            continue
+        if keep_ids is not None and f.stem not in keep_ids:
+            try:
+                f.unlink()
+            except OSError:
+                pass
+            continue
+        entries.append((st.st_mtime, st.st_size, f))
+    total = sum(size for _, size, _ in entries)
+    for _, size, f in sorted(entries):
+        if total <= limit:
+            break
+        try:
+            f.unlink()
+            total -= size
+        except OSError:
+            pass
 
 
 def forget(db, paths):

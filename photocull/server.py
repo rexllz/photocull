@@ -125,6 +125,8 @@ class App:
         self.done = self.total = 0
         self.phase = ""
         self.rows, self.groups, self.shots, self.singles = [], [], {}, []
+        self.videos = []        # listed for playing, downloading and trashing; never grouped
+        self.new_previews = 0
         # Shots the user said are not duplicates ("keep all, skip this group"). Memory
         # only, on purpose: forgotten when another folder is opened or the app restarts.
         self.skipped = set()
@@ -181,6 +183,7 @@ class App:
             self.done = self.total = 0
             self.phase = ""
             self.rows, self.groups, self.shots, self.singles = [], [], {}, []
+            self.videos = []
         threading.Thread(target=self._scan, args=(rescan,), daemon=True).start()
         return None
 
@@ -197,12 +200,18 @@ class App:
                 self.db, self.cache, self.rows = db, cache, rows
                 self._group()
                 self.status = "ready"
+            index.prune_previews(cache, set(self.shots))
             remember_folder(self.root)
         except Exception as exc:  # surface any failure in the page instead of dying silently
             self.status, self.error = "error", "Scan failed: %s" % exc
 
     def _group(self):
         shots = grouping.build_shots(self.rows)
+        self.videos = sorted((s for s in shots if s["video"]), key=lambda s: s["taken"])
+        for s in self.videos:
+            s["identical"] = s["suggest_trash"] = False
+            s["score"] = None
+        shots_all, shots = shots, [s for s in shots if not s["video"]]
         groups = grouping.group_shots(shots, threshold=self.threshold, window=self.window)
         # Skipped shots leave their group; a group left with one shot is no group.
         for g in groups:
@@ -210,7 +219,7 @@ class App:
         self.groups = [g for g in groups if len(g["shots"]) > 1]
         for n, g in enumerate(self.groups):
             g["id"] = n
-        self.shots = {s["id"]: s for s in shots}
+        self.shots = {s["id"]: s for s in shots_all}
         grouped = {s["id"] for g in self.groups for s in g["shots"]}
         self.singles = sorted((s for s in shots if s["id"] not in grouped), key=lambda s: s["taken"])
         for s in self.singles:
@@ -243,7 +252,7 @@ class App:
                 "done": self.done, "total": self.total, "phase": self.phase, "files": len(self.rows),
                 "unreadable": sum(1 for r in self.rows if not r["dhash"]),
                 "threshold": self.threshold, "window": self.window,
-                "videos": index.INCLUDE_VIDEOS, "phone": bool(self.phone_token),
+                "videos": len(self.videos), "phone": bool(self.phone_token),
                 "skipped": len(self.skipped & set(self.shots)),
                 "recent": recent_folders()}
 
@@ -262,18 +271,21 @@ class App:
             return {"groups": [{"id": g["id"], "kind": g["kind"], "taken": g["taken"],
                                 "shots": [self._shot_json(s) for s in g["shots"]]}
                                for g in self.groups],
-                    "singles": [self._shot_json(s) for s in self.singles]}
+                    "singles": [self._shot_json(s) for s in self.singles],
+                    "videos": [self._shot_json(s) for s in self.videos]}
 
     # ---- actions --------------------------------------------------------
     def trash(self, ids):
         with self.lock:
-            # Second line of defence: a video is never moved to the Trash from here.
-            shots = [self.shots[i] for i in ids if i in self.shots and not self.shots[i]["video"]
-                     and not any(f["kind"] == "video" for f in self.shots[i]["files"])]
+            # Only what was explicitly marked: videos are never marked for the user.
+            shots = [self.shots[i] for i in ids if i in self.shots]
             paths = [f["path"] for s in shots for f in s["files"]]
             failed = set(move_to_trash(paths))
             moved = {p for p in paths if p not in failed}
             index.forget(self.db, sorted(moved))
+            for s in shots:   # their full-size previews are no longer needed either
+                if self.cache:
+                    (self.cache / "previews" / (s["id"] + ".jpg")).unlink(missing_ok=True)
             self.rows = [r for r in self.rows if r["path"] not in moved]
             gone = sum(1 for s in shots if not any(f["path"] in failed for f in s["files"]))
             self._group()  # a group left with one shot becomes a single again
@@ -286,6 +298,14 @@ class App:
             longest = max(shot["rep"]["w"] or 0, shot["rep"]["h"] or 0) or PREVIEW_PX
             if not index.make_jpeg(shot["rep"]["path"], dest, min(PREVIEW_PX, longest), quality=85):
                 return shot["rep"]["thumb"]
+            self.new_previews += 1
+            if self.new_previews % 25 == 0:
+                index.prune_previews(self.cache)
+        else:
+            try:
+                os.utime(dest)   # recently viewed previews are the last to be pruned
+            except OSError:
+                pass
         return dest
 
 
@@ -371,10 +391,11 @@ def make_handler(app):
             except (OSError, ValueError):
                 pass  # the phone went away or a file vanished: the download just ends
 
-        def _file(self, path, ctype=None, download=False):
+        def _file(self, path, ctype=None, download=False, cache=False):
             if not path or not os.path.exists(path):
                 return self.send_error(404)
-            if download:
+            if download or (ctype is None and os.path.splitext(path)[1].lower() in index.VIDEO_EXTS):
+                # Large originals and video streams may pause for a while on a phone.
                 self.connection.settimeout(DOWNLOAD_TIMEOUT)
             size = os.path.getsize(path)
             start, end, status = 0, size - 1, 200
@@ -400,6 +421,9 @@ def make_handler(app):
                 plain = "".join(c if c.isalnum() or c in "._- " else "_" for c in name)
                 self.send_header("Content-Disposition", "attachment; filename=\"%s\"; filename*=UTF-8''%s"
                                  % (plain.encode("ascii", "replace").decode(), quote(name)))
+            # Thumbnails and previews may sit in the browser's own short-lived cache so
+            # scrolling back is quick; originals and videos are never stored by it.
+            self.send_header("Cache-Control", "private, max-age=3600" if cache else "no-store")
             self.send_header("Accept-Ranges", "bytes")
             self.send_header("Content-Length", str(end - start + 1))
             if status == 206:
@@ -454,16 +478,18 @@ def make_handler(app):
             if path == "/download.zip":
                 ids = parse_qs(parsed.query).get("ids", [""])[0].split(",")[:MAX_ZIP_SHOTS]
                 shots = [app.shots[i] for i in dict.fromkeys(ids) if i in app.shots]
-                shots = [s for s in shots if not s["video"] and os.path.exists(s["rep"]["path"])]
+                shots = [s for s in shots if os.path.exists(s["rep"]["path"])]
                 return self._zip(shots) if shots else self.send_error(404)
             kind, _, shot_id = path.strip("/").partition("/")
             shot = app.shots.get(shot_id)
             if not shot:
                 return self.send_error(404)
             if kind == "thumb":
-                return self._file(shot["rep"]["thumb"], "image/jpeg")
+                return self._file(shot["rep"]["thumb"], "image/jpeg", cache=True)
             if kind == "preview":
-                return self._file(app.preview(shot), "image/jpeg")
+                if shot["video"]:
+                    return self._file(shot["rep"]["thumb"], "image/jpeg", cache=True)
+                return self._file(app.preview(shot), "image/jpeg", cache=True)
             if kind == "media":      # the original, shown in the browser
                 return self._file(shot["rep"]["path"])
             if kind == "download":   # the original, saved as a file
@@ -513,10 +539,11 @@ def make_handler(app):
                     return self.send_error(400)
                 app.skip(ids, bool(data.get("skip", True)))
                 return self._json(self._state())
-            if self.path == "/api/reveal":
+            if self.path in ("/api/reveal", "/api/play"):   # Mac only: Finder / default app
                 shot = app.shots.get(data.get("id"))
                 if shot:
-                    subprocess.run(["open", "-R", shot["rep"]["path"]])
+                    flags = ["-R"] if self.path == "/api/reveal" else []
+                    subprocess.run(["open"] + flags + [shot["rep"]["path"]])
                 return self._json({"ok": bool(shot)})
             self.send_error(404)
 

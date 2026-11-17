@@ -104,30 +104,49 @@ class GroupingTest(unittest.TestCase):
         self.assertEqual(group_shots(shots), [])
 
 
-class VideoSafetyTest(unittest.TestCase):
-    def test_videos_are_not_scanned(self):
+class VideoTest(unittest.TestCase):
+    def test_videos_are_found(self):
         import os
         import tempfile
         from photocull import index
         with tempfile.TemporaryDirectory() as d:
             for name in ("a.JPG", "b.MOV", "c.mp4"):
                 open(os.path.join(d, name), "w").close()
-            found = sorted(os.path.basename(p) for p, _ in index.find_media(d))
-        self.assertFalse(index.INCLUDE_VIDEOS)
-        self.assertEqual(found, ["a.JPG"])
+            found = sorted((os.path.basename(p), k) for p, k in index.find_media(d))
+        self.assertEqual(found, [("a.JPG", "image"), ("b.MOV", "video"), ("c.mp4", "video")])
 
-    def test_trash_refuses_videos(self):
-        from unittest import mock
+    def test_videos_are_listed_but_never_grouped_or_premarked(self):
         from photocull import server
         app = server.App()
-        video = {"id": "v", "video": True, "files": [{"path": "/x/clip.MOV", "kind": "video"}]}
-        app.shots = {"v": video}
-        with mock.patch.object(server, "move_to_trash") as mover, \
-                mock.patch.object(server.index, "forget"), mock.patch.object(app, "_group"):
-            mover.return_value = []
-            result = app.trash(["v"])
-        mover.assert_called_once_with([])
-        self.assertEqual(result["files"], 0)
+        app.status, app.root = "ready", "/a"
+        # Two byte-identical videos: still not offered as duplicates.
+        app.rows = [row("/a/1.MOV", A, taken=1, qhash="same", kind="video"),
+                    row("/a/1 copy.MOV", A, taken=2, qhash="same", kind="video"),
+                    row("/a/2.JPG", B, taken=3)]
+        app._group()
+        self.assertEqual(app.groups, [])
+        self.assertEqual([s["name"] for s in app.videos], ["1.MOV", "1 copy.MOV"])
+        self.assertEqual([s["name"] for s in app.singles], ["2.JPG"])
+        payload = app.payload()
+        self.assertFalse(any(v["suggest"] for v in payload["videos"]))
+        self.assertEqual(app.state()["videos"], 2)
+
+
+class PreviewCacheTest(unittest.TestCase):
+    def test_prune_drops_orphans_then_oldest(self):
+        import os
+        import tempfile
+        from photocull import index
+        with tempfile.TemporaryDirectory() as d:
+            folder = os.path.join(d, "previews")
+            os.mkdir(folder)
+            for i, name in enumerate(["old", "mid", "new", "gone"]):
+                path = os.path.join(folder, name + ".jpg")
+                with open(path, "wb") as f:
+                    f.write(b"x" * 100)
+                os.utime(path, (1000 + i, 1000 + i))
+            index.prune_previews(d, keep_ids={"old", "mid", "new"}, limit=250)
+            self.assertEqual(sorted(os.listdir(folder)), ["mid.jpg", "new.jpg"])
 
 
 class AccessTest(unittest.TestCase):
