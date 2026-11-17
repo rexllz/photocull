@@ -264,6 +264,62 @@ class PhoneAccessTest(unittest.TestCase):
         self.assertEqual(self.phone("GET", "/api/state", old), 403)
 
 
+class DownloadTest(unittest.TestCase):
+    def setUp(self):
+        import os
+        import tempfile
+        import threading
+        from photocull import server
+        self.dir = tempfile.TemporaryDirectory()
+        self.app = server.App()
+        self.app.root = self.dir.name
+        os.mkdir(os.path.join(self.dir.name, "day 2"))
+        for i, rel in enumerate(["DSC_0001.JPG", os.path.join("day 2", "DSC_0001.JPG")]):
+            path = os.path.join(self.dir.name, rel)
+            with open(path, "wb") as f:
+                f.write(b"photo-%d" % i * 1000)
+            self.app.shots["s%d" % i] = {"id": "s%d" % i, "video": False,
+                                         "rep": {"path": path, "thumb": None, "size": 7000}}
+        self.httpd = server.serve(self.app, 0)
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+
+    def tearDown(self):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+        self.dir.cleanup()
+
+    def get(self, path, signed_in=True):
+        import http.client
+        conn = http.client.HTTPConnection("127.0.0.1", self.app.port, timeout=5)
+        cookie = {"Cookie": "photocull_%d=%s" % (self.app.port, self.app.token)} if signed_in else {}
+        conn.request("GET", path, headers=cookie)
+        resp = conn.getresponse()
+        body = resp.read()
+        conn.close()
+        return resp, body
+
+    def test_single_download_is_the_original_as_an_attachment(self):
+        resp, body = self.get("/download/s0")
+        self.assertEqual(resp.status, 200)
+        self.assertIn('attachment; filename="DSC_0001.JPG"', resp.getheader("Content-Disposition"))
+        self.assertEqual(body, b"photo-0" * 1000)
+
+    def test_batch_download_is_a_zip_with_folder_paths(self):
+        import io
+        import zipfile
+        resp, body = self.get("/download.zip?ids=s0,s1,s0,missing")
+        self.assertEqual(resp.status, 200)
+        with zipfile.ZipFile(io.BytesIO(body)) as z:
+            self.assertEqual(sorted(z.namelist()), ["DSC_0001.JPG", "day 2/DSC_0001.JPG"])
+            self.assertEqual(z.read("day 2/DSC_0001.JPG"), b"photo-1" * 1000)
+            self.assertIsNone(z.testzip())
+
+    def test_downloads_need_the_key(self):
+        self.assertEqual(self.get("/download/s0", signed_in=False)[0].status, 403)
+        self.assertEqual(self.get("/download.zip?ids=s0", signed_in=False)[0].status, 403)
+        self.assertEqual(self.get("/download.zip?ids=nope")[0].status, 404)
+
+
 class DemoScriptTest(unittest.TestCase):
     def test_refuses_to_replace_a_folder_it_did_not_make(self):
         import os

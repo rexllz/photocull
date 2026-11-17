@@ -7,9 +7,10 @@ import socket
 import subprocess
 import tempfile
 import threading
+import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 from . import grouping, index
 from .trash import move_to_trash
@@ -17,6 +18,11 @@ from .trash import move_to_trash
 WEB = Path(__file__).parent / "web"
 RECENT = Path.home() / "Library" / "Caches" / "photocull" / "recent.json"
 PREVIEW_PX = 2400
+MAX_ZIP_SHOTS = 500  # most photos one batch download may hold
+# How long one read or write on a connection may stall before it is dropped. Pages and
+# thumbnails get the short limit; original-file downloads to a phone get the long one,
+# since a phone on weak Wi-Fi (or briefly in the background) can pause mid-transfer.
+IDLE_TIMEOUT, DOWNLOAD_TIMEOUT = 60, 600
 MAX_BODY = 1 << 20   # largest request body accepted (a list of shot ids is far smaller)
 # Sent with every response: no framing by other sites, no outside resources, no sniffing.
 SECURITY_HEADERS = (
@@ -221,7 +227,7 @@ class App:
                 "folder": os.path.relpath(s["folder"], self.root),
                 "video": s["video"], "raw": s["has_raw"], "size": s["size"],
                 "w": s["rep"]["w"], "h": s["rep"]["h"], "taken": s["taken"],
-                "files": len(s["files"]), "identical": s["identical"],
+                "files": len(s["files"]), "original": s["rep"]["size"], "identical": s["identical"],
                 "suggest": s["suggest_trash"], "thumb": bool(s["rep"]["thumb"]),
                 "score": s.get("score")}
 
@@ -260,7 +266,7 @@ class App:
 
 def make_handler(app):
     class Handler(BaseHTTPRequestHandler):
-        timeout = 60  # drop connections that go quiet, so idle sockets cannot pile up
+        timeout = IDLE_TIMEOUT  # drop connections that go quiet, so idle sockets cannot pile up
 
         def log_message(self, *args):
             pass
@@ -320,9 +326,31 @@ def make_handler(app):
         def _json(self, obj, status=200):
             self._send(json.dumps(obj).encode(), "application/json", status)
 
-        def _file(self, path, ctype=None):
+        def _zip(self, shots):
+            """Stream the originals of several shots as one zip, written as it is read
+            so nothing is buffered on the Mac and the download starts at once."""
+            self.connection.settimeout(DOWNLOAD_TIMEOUT)
+            self.close_connection = True   # length unknown up front: end of stream ends the file
+            self.send_response(200)
+            self.send_header("Content-Type", "application/zip")
+            self.send_header("Content-Disposition",
+                             'attachment; filename="photocull-%d-photos.zip"' % len(shots))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            try:
+                # Stored, not compressed: JPEG and RAW data does not shrink.
+                with zipfile.ZipFile(self.wfile, "w", zipfile.ZIP_STORED) as archive:
+                    for shot in shots:
+                        path = shot["rep"]["path"]
+                        archive.write(path, os.path.relpath(path, app.root))
+            except (OSError, ValueError):
+                pass  # the phone went away or a file vanished: the download just ends
+
+        def _file(self, path, ctype=None, download=False):
             if not path or not os.path.exists(path):
                 return self.send_error(404)
+            if download:
+                self.connection.settimeout(DOWNLOAD_TIMEOUT)
             size = os.path.getsize(path)
             start, end, status = 0, size - 1, 200
             rng = self.headers.get("Range") or ""
@@ -342,6 +370,11 @@ def make_handler(app):
             self.send_response(status)
             self.send_header("Content-Type", ctype or mimetypes.guess_type(path)[0]
                              or "application/octet-stream")
+            if download:
+                name = os.path.basename(path)
+                plain = "".join(c if c.isalnum() or c in "._- " else "_" for c in name)
+                self.send_header("Content-Disposition", "attachment; filename=\"%s\"; filename*=UTF-8''%s"
+                                 % (plain.encode("ascii", "replace").decode(), quote(name)))
             self.send_header("Accept-Ranges", "bytes")
             self.send_header("Content-Length", str(end - start + 1))
             if status == 206:
@@ -357,8 +390,8 @@ def make_handler(app):
                             break
                         self.wfile.write(block)
                         left -= len(block)
-            except (BrokenPipeError, ConnectionResetError):
-                pass
+            except OSError:
+                pass  # the other side closed the connection or stalled past the timeout
 
         def do_GET(self):
             if not self._local():
@@ -393,6 +426,11 @@ def make_handler(app):
                 return self._send(app.phone_qr, "image/png")
             if path == "/api/groups":
                 return self._json(app.payload())
+            if path == "/download.zip":
+                ids = parse_qs(parsed.query).get("ids", [""])[0].split(",")[:MAX_ZIP_SHOTS]
+                shots = [app.shots[i] for i in dict.fromkeys(ids) if i in app.shots]
+                shots = [s for s in shots if not s["video"] and os.path.exists(s["rep"]["path"])]
+                return self._zip(shots) if shots else self.send_error(404)
             kind, _, shot_id = path.strip("/").partition("/")
             shot = app.shots.get(shot_id)
             if not shot:
@@ -401,8 +439,10 @@ def make_handler(app):
                 return self._file(shot["rep"]["thumb"], "image/jpeg")
             if kind == "preview":
                 return self._file(app.preview(shot), "image/jpeg")
-            if kind == "media":
+            if kind == "media":      # the original, shown in the browser
                 return self._file(shot["rep"]["path"])
+            if kind == "download":   # the original, saved as a file
+                return self._file(shot["rep"]["path"], download=True)
             self.send_error(404)
 
         def do_POST(self):

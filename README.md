@@ -98,13 +98,15 @@ Keys: `J`/`K` next/previous group, `1`–`9` toggle a shot, `B` keep best only,
 <img src="docs/phone.png" alt="Review page on a phone" width="300">
 
 > [!WARNING]
-> **Phone access is not encrypted.** While it is switched on, the page and its
-> key travel over your Wi-Fi as plain HTTP. On a network shared with people you
-> don't know (public, office, hotel, some apartment-building Wi-Fi), someone
-> capturing traffic could read the key and then **view or trash the photos in
-> the open folder**. Only switch it on when you trust everyone on the Wi-Fi
-> (or use your phone's own hotspot), and switch it off when you're done. It is
-> off by default.
+> **Phone access is not encrypted.** While it is switched on, the page, its
+> key and **the photos themselves** (thumbnails, full-size views and
+> downloads) travel over your Wi-Fi as plain HTTP. On a network shared with
+> people you don't know (public, office, hotel, some apartment-building Wi-Fi),
+> someone capturing traffic could see those photos, or read the key and then
+> **view, download or trash the photos in the open folder**. Only switch it on
+> when you trust everyone on the Wi-Fi (or use your phone's own hotspot), and
+> switch it off when you're done. It is off by default, and the page shows a
+> warning bar on both the Mac and the phone while it is on.
 
 You can review on a phone while the photos stay on the Mac:
 
@@ -116,6 +118,22 @@ You can review on a phone while the photos stay on the Mac:
    between shots, pinch to zoom), and use **Move to Trash** as on the Mac. Files
    are moved to the Trash on the Mac; nothing on the phone is touched.
 4. Click **Phone: on** → **Turn off phone access** when you're done.
+
+### Download originals to the phone
+
+- **One photo:** tap **View**, then **Download** to save the original file, or
+  **Original** to open it full size (on an iPhone, long-press it there to save
+  it to Photos).
+- **Several photos:** tap **↓ Select** on each shot you want, then
+  **Download N** at the top. They arrive as one zip file, with the folder
+  structure kept; on an iPhone it lands in the Files app, where you can unzip
+  it and save the pictures to Photos.
+
+For a RAW + JPEG pair the JPEG is the file sent. A batch holds up to 500
+photos and is streamed as it is read, so it starts at once; keep the page open
+until it finishes. A transfer that stalls for more than ten minutes (for
+example, the phone left the Wi-Fi) is dropped, and you can simply start it
+again.
 
 Both devices must be on the same Wi-Fi, and the Mac must stay awake. Some
 networks (guest, hotel, some shared building Wi-Fi) block devices from reaching
@@ -216,13 +234,14 @@ tests/                      unit tests
 - **Phone access is opt-in.** Only while you switch it on does the app also
   answer on your Wi-Fi address. The phone gets its own random key (in the QR
   code), which stops working the moment you switch phone access off. From the
-  phone you can review and trash within the open folder only: choosing other
-  folders stays on the Mac.
+  phone you can review, download and trash within the open folder only:
+  choosing other folders stays on the Mac.
 - **Phone access is not encrypted.** The connection is plain HTTP inside your
-  network. On Wi-Fi shared with people you don't know (public, office, some
-  apartment-building networks), someone capturing traffic could read the key
-  and then view or trash the photos in the open folder. Use phone access on
-  Wi-Fi you trust and switch it off afterwards.
+  network, so the photos you view or download travel in the clear. On Wi-Fi
+  shared with people you don't know (public, office, some apartment-building
+  networks), someone capturing traffic could see them, or read the key and
+  then view, download or trash the photos in the open folder. Use phone access
+  on Wi-Fi you trust and switch it off afterwards.
 - **Session key.** The link printed at start-up contains a random key. Every
   request must carry it, so other users logged in to the same Mac cannot view
   your photos or trash anything. Treat the link like a password while the app

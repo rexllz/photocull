@@ -150,6 +150,21 @@
   .sheet .btns { display: flex; gap: 8px; justify-content: center; margin-top: 16px; }
   #phone.on { color: var(--keep); border-color: var(--keep); }
 
+  /* Risk notices: shown on the Mac while phone access is on, and always on the phone. */
+  .notice { background: #3a2c10; color: #ffd98a; border-top: 1px solid #5a4416; font-size: 13px;
+            padding: 7px 20px; display: flex; gap: 10px; align-items: center; justify-content: center; flex-wrap: wrap; }
+  .notice button { padding: 2px 10px; font-size: 12px; background: transparent; border-color: #8a6a22; color: inherit; }
+  .notice[hidden], body:not(.remote) #netnote { display: none; }
+
+  /* Choosing shots to download to the phone. */
+  .tile .pick { position: absolute; top: 140px; left: 8px; padding: 2px 9px; font-size: 12px;
+                background: rgba(0,0,0,.72); border-color: rgba(255,255,255,.18); }
+  .tile.picked .pick { background: var(--focus); border-color: var(--focus); color: #06182c; font-weight: 600; }
+  .tile.picked { outline: 2px solid var(--focus); outline-offset: 2px; }
+  #dl { background: var(--focus); border-color: var(--focus); color: #06182c; font-weight: 600; }
+  body:not(.remote) .tile .pick, body:not(.remote) #dl, body:not(.remote) #boxopen,
+  body:not(.remote) #boxdl { display: none; }
+
   /* Signed in from a phone: folder choice, Finder and the phone switch stay on the Mac. */
   body.remote #phone, body.remote #boxreveal, body.remote #pick, body.remote .or,
   body.remote #pathform, body.remote #recent { display: none; }
@@ -172,7 +187,8 @@
     .tile { width: calc(50% - 4px); }
     .tile .pic { height: 118px; }
     .tile img { max-height: 118px; }
-    .tile .zoom { top: 86px; }
+    .tile .zoom, .tile .pick { top: 86px; }
+    .notice { padding: 6px 12px; font-size: 12px; }
     .keys { display: none; }
     #boxbar { flex-wrap: wrap; padding: 10px 12px; gap: 8px; }
     #boxinfo { flex-basis: 100%; white-space: normal; font-size: 12px; }
@@ -245,6 +261,14 @@
       <div class="grow"></div>
       <button id="bestall" title="In every group shown, mark everything except the best shot">Keep best only in shown groups</button>
       <button id="clear">Unmark all</button>
+      <button id="dl" hidden></button>
+    </div>
+    <div class="notice" id="phonebar" hidden>
+      <span><b>Phone access is on.</b> This folder can be viewed, trashed and downloaded over your Wi-Fi, unencrypted.</span>
+      <button id="phonemanage">Manage</button>
+    </div>
+    <div class="notice" id="netnote">
+      <span>Photos and downloads travel over this Wi-Fi <b>unencrypted</b>. Use a network you trust.</span>
     </div>
   </header>
   <main>
@@ -263,6 +287,8 @@
     <button id="boxprev" title="Previous (←)">‹</button>
     <button id="boxnext" title="Next (→)">›</button>
     <button id="boxstate" title="Click to switch (X)"></button>
+    <button id="boxopen" title="Open the full-size original; long-press it to save to Photos">Original</button>
+    <button id="boxdl" title="Save the original file to this phone">Download</button>
     <button id="boxreveal">Show in Finder</button>
     <button id="boxclose">Close</button>
   </div>
@@ -273,8 +299,9 @@
     <h2>Review from your phone</h2>
     <p>Scan with the phone's camera. Both devices must be on the same Wi-Fi.</p>
     <img id="phoneqr" alt="QR code for the phone link">
-    <p>Anyone with this code can view and trash the photos in this folder while phone access is on.
-       Use it on a network you trust, and turn it off when you're done.</p>
+    <p><b style="color:#ffd98a">Not encrypted.</b> Anyone with this code can view, download and trash the
+       photos in this folder while phone access is on, and the photos themselves travel over the Wi-Fi
+       in the clear. Use a network you trust, and turn it off when you're done.</p>
     <div class="btns">
       <button id="phoneoff" class="danger">Turn off phone access</button>
       <button id="phoneclose">Close</button>
@@ -289,6 +316,7 @@ if (location.search) history.replaceState(null, "", location.pathname + location
 const PAGE = 40;
 let state = {}, groups = [], singles = [], marks = new Map(), filter = "all", shown = [], rendered = 0, focus = 0;
 let box = null;       // {group, i} while viewing full size
+let picks = new Set(), byId = new Map();   // shots chosen for download (phone only)
 let pollTimer = null;
 
 const $ = id => document.getElementById(id);
@@ -379,9 +407,11 @@ async function loadGroups(keepMarks) {
   const data = await (await fetch("/api/groups")).json();
   groups = data.groups; singles = data.singles;
   unique.shots = singles;
-  const old = marks; marks = new Map();
-  for (const g of groups.concat([unique])) for (const s of g.shots)
-    marks.set(s.id, keepMarks && old.has(s.id) ? old.get(s.id) : s.suggest);
+  const old = marks; marks = new Map(); byId = new Map();
+  for (const g of groups.concat([unique])) for (const s of g.shots) {
+    marks.set(s.id, keepMarks && old.has(s.id) ? old.get(s.id) : s.suggest); byId.set(s.id, s);
+  }
+  picks = new Set([...picks].filter(id => byId.has(id)));
   const name = state.root.slice(state.root.lastIndexOf("/") + 1) || state.root;
   $("folder").textContent = name; $("folder").title = state.root + " — choose another folder";
   document.title = "photocull — " + name;
@@ -472,6 +502,9 @@ function renderTile(g, s, i) {
   t.appendChild(pic);
   t.appendChild(el("span", "state"));
   if (g !== unique) t.appendChild(el("span", "num", String(i + 1)));
+  const pick = el("button", "pick");
+  pick.onclick = e => { e.stopPropagation(); picks.has(s.id) ? picks.delete(s.id) : picks.add(s.id); paintTile(t, s); updateStats(); };
+  t.appendChild(pick);
   const zoom = el("button", "zoom", s.video ? "Play" : "View");
   zoom.onclick = e => { e.stopPropagation(); openBox(g, i); };
   t.appendChild(zoom);
@@ -523,8 +556,9 @@ function renderScore(sc) {
 const cardOf = g => document.querySelector('.group[data-gid="' + g.id + '"]');
 
 function paintTile(t, s) {
-  const m = marks.get(s.id);
+  const m = marks.get(s.id), picked = picks.has(s.id);
   t.classList.toggle("marked", m); t.querySelector(".state").textContent = m ? "TRASH" : "KEEP";
+  t.classList.toggle("picked", picked); t.querySelector(".pick").textContent = picked ? "✓ Download" : "↓ Select";
   return m;
 }
 
@@ -553,6 +587,8 @@ function updateStats() {
             el("b", null, fmtNum(m.length)), " marked" + (m.length ? ", frees " + fmtSize(bytes) : ""));
   const btn = $("trash"); btn.disabled = !m.length;
   btn.textContent = m.length ? "Move " + fmtNum(m.length) + " to Trash" : "Move to Trash";
+  const dl = $("dl"); dl.hidden = !picks.size;
+  dl.textContent = "Download " + picks.size + " (" + fmtSize(pickedBytes()) + ")";
 }
 
 function setFocus(i, scroll) {
@@ -595,10 +631,27 @@ $("boxstage").addEventListener("touchend", e => {
   if (Math.abs(dx) > 60) stepBox(dx < 0 ? 1 : -1);
 }, { passive: true });
 
+/* ---------- downloads to the phone ---------- */
+const pickedBytes = () => [...picks].reduce((a, id) => a + (byId.get(id) ? byId.get(id).original : 0), 0);
+$("dl").onclick = () => {
+  const ids = [...picks]; if (!ids.length) return;
+  if (ids.length === 1) { location.href = "/download/" + ids[0]; return; }
+  if (ids.length > 500) return toast("Choose 500 photos or fewer for one download.");
+  if (!confirm("Download " + ids.length + " originals (" + fmtSize(pickedBytes()) + ") as one zip file?\n\n" +
+               "It is saved to the Files app. Keep this page open until it finishes. " +
+               "The photos travel over this Wi-Fi unencrypted.")) return;
+  location.href = "/download.zip?ids=" + ids.join(",");
+  toast("Download started. Large batches take a while; keep this page open.");
+};
+$("boxopen").onclick = () => window.open("/media/" + box.group.shots[box.i].id, "_blank");
+$("boxdl").onclick = () => { location.href = "/download/" + box.group.shots[box.i].id; };
+
 /* ---------- phone access ---------- */
 function paintPhone() {
   const b = $("phone"); b.classList.toggle("on", !!state.phone); b.textContent = state.phone ? "Phone: on" : "Phone";
+  $("phonebar").hidden = !state.phone || !!state.remote;
 }
+$("phonemanage").onclick = () => openPhoneBox();
 function openPhoneBox() { $("phoneqr").src = "/api/phone/qr.png?" + Date.now(); $("phonebox").classList.add("open"); }
 $("phone").onclick = async () => {
   if (state.phone) return openPhoneBox();
